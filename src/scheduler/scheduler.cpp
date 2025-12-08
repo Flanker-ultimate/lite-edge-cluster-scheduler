@@ -1,5 +1,6 @@
 #include"scheduler.h"
-#include<iostream>
+#include <spdlog/spdlog.h>
+#include <spdlog/fmt/bundled/ostream.h>
 #include<fstream>
 #include<thread>
 #include<chrono>
@@ -49,7 +50,7 @@ Docker_scheduler::Docker_scheduler(string knowledge_file) {
     infile.open(knowledge_file, ios::in);
     //reading profiling result from infile, write them into tasks_info
     if (!infile.is_open()) {
-        cerr << "Failed to open file: " << knowledge_file << endl;
+        spdlog::error("Failed to open file: {}", knowledge_file);
         return;
     }
     // Parse the JSON file into a json object
@@ -71,7 +72,7 @@ Docker_scheduler::Docker_scheduler(string knowledge_file) {
         else if (task_str == "decoding") task_type = decoding;
         else if (task_str == "encoding") task_type = encoding;
         else task_type = Unknown;
-        cout << "task load:" << task_str << endl;
+        spdlog::info("task load:{}", task_str);
         // Loop through the devices for each task
         for (const auto &device_entry: task_entry.value().items()) {
             string device_str = device_entry.key();
@@ -81,7 +82,7 @@ Docker_scheduler::Docker_scheduler(string knowledge_file) {
             else if (device_str == "ATLAS_H") device_type = ATLAS_H;
             else if (device_str == "ORIN") device_type = ORIN;
             else continue;
-            cout << "device load:" << device_str << endl;
+            spdlog::info("device load:{}", device_str);
             // Check if the required fields are present in the JSON before creating StaticInfoItem
             const auto &device = device_entry.value();
             if (device.contains("imageInfo") && device.contains("taskOverhead")) {
@@ -91,7 +92,7 @@ Docker_scheduler::Docker_scheduler(string knowledge_file) {
                 // Add the StaticInfoItem to the static_info map
                 static_info[task_type][device_type] = static_info_item;
             } else {
-                cout << "Missing necessary fields for device: " << device_str << endl;
+                spdlog::error("Missing necessary fields for device: {}", device_str);
             }
         }
     }
@@ -136,8 +137,8 @@ void Docker_scheduler::display_dev() {
             //cout << "Device ID: " << id << endl;
             //cout << "Device IP: " << device_static_info[id].ip_address << endl;
             //cout << "Device Port: " << device_static_info[id].agent_port << endl;
-            cout << "Device Type: " << device_static_info[id].type << endl;
-            cout << "Device Status: " << endl;
+            spdlog::info("Device Type: {}", device_static_info[id].type);
+            spdlog::info("Device Status: ");
             status.show();
         }
     }
@@ -225,8 +226,7 @@ void Docker_scheduler::startDeviceInfoCollection() {
                             json j = json::parse(restr);
                             string resp_status = j["status"];
                             if (resp_status != "success") {
-                                spdlog::error(
-                                        "Failed to get device info, agent return filed,dev.ip_address:{}, dev.agent_port:{}",
+                                spdlog::error("Failed to get device info, agent return filed,dev.ip_address:{}, dev.agent_port:{}",
                                         dev.ip_address, dev.agent_port);
                                 continue;
                             }
@@ -243,7 +243,7 @@ void Docker_scheduler::startDeviceInfoCollection() {
                             continue;
                         }
                     } catch (const std::exception &e) {
-                        std::cerr << "collect info error: " << e.what() << std::endl;
+                        spdlog::error("collect info error: {}", e.what());
                         continue;
                     }
                 }
@@ -278,7 +278,7 @@ void Docker_scheduler::inactiveTimeCallback(TaskType ttype, Device dev, string c
     tdMap[ttype][dev.global_id].dev_srv_info_status = NoExist;
     // modify info
 
-    std::cout << "inactiveTimeCallback triggered the callback!" << std::endl;
+    spdlog::info("inactiveTimeCallback triggered the callback!");
 }
 
 std::optional<SrvInfo> Docker_scheduler::getOrCrtSrvByTType(TaskType ttype) {
@@ -306,8 +306,7 @@ std::optional<SrvInfo> Docker_scheduler::getOrCrtSrvByTType(TaskType ttype) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             }
             if (index <= 0 || tdMap[ttype][tgt_dev.global_id].dev_srv_info_status == NoExist) {
-                spdlog::error(
-                    "for Tasktype:{},devIp:{}, the dev is creating contianer but over 10 times try or creating failed",
+                spdlog::error("for Tasktype:{},devIp:{}, the dev is creating contianer but over 10 times try or creating failed",
                     to_string(nlohmann::json(ttype)), tgt_dev.ip_address);
                 return nullopt;
             }
@@ -594,11 +593,7 @@ Device Docker_scheduler::Z3_schedule_v2(TaskType Ttype){
                     opt.add(mem <= maxV);
                     opt.add(xpu <= maxV);
 
-                    std::cout << "Estimated load exprs for Device " << boost::uuids::to_string(device_id)
-                            << " Estimated CPU: " << get_double_value(cpu)
-                            << " Estimated MEM: " << get_double_value(mem)
-                            << " Estimated XPU: " << get_double_value(xpu)
-                            << std::endl;
+                    spdlog::info("Estimated load exprs for Device {} Estimated CPU: {} Estimated MEM: {} Estimated XPU: {}", boost::uuids::to_string(device_id), get_double_value(cpu), get_double_value(mem), get_double_value(xpu));
                 }
 
 
@@ -662,12 +657,12 @@ Device Docker_scheduler::Z3_schedule_v2(TaskType Ttype){
 
         }
 
-        std::cout << "Selected device: " << boost::uuids::to_string(selected_device_id) << " with load: " << min_load << std::endl;
+        spdlog::info("Selected device: {} with load: {}", boost::uuids::to_string(selected_device_id), min_load);
 
         return device_static_info[selected_device_id];
     } else {
         DeviceID selected_device_id = device_static_info.begin()->first;
-        cout<<"Z3 could not find a suitable device, select the first device by default."<<endl;
+        spdlog::warn("Z3 could not find a suitable device, select the first device by default.");
         return device_static_info[selected_device_id]; // 默认返回第一个设备
     }
 }
@@ -701,13 +696,13 @@ Device Docker_scheduler::Z3_simulate_schedule(TaskType Ttype,float prob1, float 
 // choose the device based on the random value
     for (const auto &[device_id, device] : device_static_info) {
         if (device.type == DeviceType::ATLAS_H && random_value >= 0.0f && random_value < prob1) {
-            cout << "DEVICE ATLAS-H" << endl;
+            spdlog::info("DEVICE ATLAS-H");
             return device;
         } else if (device.type == DeviceType::ATLAS_L && random_value >= prob1 && random_value < prob1 + prob2) {
-            cout << "DEVICE ATLAS-L" << endl;
+            spdlog::info("DEVICE ATLAS-L");
             return device;
         } else if (device.type == DeviceType::RK3588 && random_value >= prob1 + prob2 && random_value < 1.0f) {
-            cout << "DEVICE RK3588" << endl;
+            spdlog::info("DEVICE RK3588");
             return device;
         }
     }
@@ -922,10 +917,10 @@ Device Docker_scheduler::Pic_Schedule(TaskType Ttype) {
             min_load = load;
             best_device = device_id;
         }
-        std::cout<<"caculate device" << device_static_info[device_id].ip_address << std::endl;
+        spdlog::info("caculate device{}", device_static_info[device_id].ip_address);
     }
 
-    std::cout << "Selected device: " << device_static_info[best_device].ip_address << std::endl;
+    spdlog::info("Selected device: {}", device_static_info[best_device].ip_address);
     return device_static_info[best_device];
 }
 
@@ -951,14 +946,13 @@ Device Docker_scheduler::RoundRobin_Schedule(TaskType Ttype) {
     //  更新索引，准备下次轮询
     rr_index = (rr_index + 1) % ids.size();
 
-    std::cout << "[INFO] RoundRobin selected device: "
-              << device_static_info[selected_id].ip_address << std::endl;
+    spdlog::info("RoundRobin selected device: {}", device_static_info[selected_id].ip_address);
     // 记录结束时间
     auto end_time = std::chrono::high_resolution_clock::now();
     // 计算耗时（单位：毫秒）
     auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
 
-    std::cout << "[RoundRobin] Execution time: " << duration_ms << " ms" << std::endl;
+    spdlog::info("[RoundRobin] Execution time: {} ms", duration_ms);
     return device_static_info[selected_id];
 }
 
@@ -971,16 +965,14 @@ bool Docker_scheduler::Disconnect_device(Device device) {
         auto it = device_status.find(device.global_id);
         if (it != device_status.end()) {
             device_status.erase(it);
-            std::cout << "[INFO] Device " << device.global_id
-                      << " disconnected and removed." << std::endl;
+            spdlog::info("Device {} disconnected and removed.", boost::uuids::to_string(device.global_id));
             return true;
         } else {
-            std::cerr << "[WARN] Device " << device.global_id
-                      << " not found in device_status." << std::endl;
+            spdlog::warn("Device {} not found in device_status.", boost::uuids::to_string(device.global_id));
             return false;
         }
     } catch (const std::exception &e) {
-        std::cerr << "[ERROR] Disconnect_device exception: " << e.what() << std::endl;
+        spdlog::error("Disconnect_device exception: {}", e.what());
         return false;
     }
 }

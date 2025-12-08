@@ -12,6 +12,7 @@ target_link_libraries(device_struct
         nlohmann_json::nlohmann_json
         Boost::uuid
         Boost::assert Boost::config Boost::throw_exception Boost::type_traits Boost::static_assert
+        spdlog::spdlog
 )
 
 # Add the Boost include directory to your target

@@ -1,5 +1,5 @@
 #include "z3++.h"
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <vector>
 #include <string>
 #include <iomanip>
@@ -101,7 +101,7 @@ int main() {
         totalV+=item.volume;
         totalW+=item.weight;
     }
-    std::cout<<"Total Volume:"<<totalV<<" total Weight:"<<totalW<<std::endl;
+    spdlog::info("Total Volume:{} total Weight:{}", totalV, totalW);
     double used_volume_white1 = 0.0, used_weight_white1 = 0.0;
     double used_volume_white2 = 0.0, used_weight_white2 = 0.0;
     double used_volume_red = 0.0, used_weight_red = 0.0;
@@ -194,11 +194,11 @@ int main() {
             double r = get_double_value(m.eval(red_proportion));
             double b = get_double_value(m.eval(blue_proportion));
 
-            std::cout << "Item " << i << " Allocation:\n";
-            std::cout << "  White Bag 1 Proportion: " << w1 << "\n";
-            std::cout << "  White Bag 2 Proportion: " << w2 << "\n";
-            std::cout << "  Red Bag Proportion: " << r << "\n";
-            std::cout << "  Blue Bag Proportion: " << b << "\n";
+            spdlog::info("Item {} Allocation:", i);
+            spdlog::info("  White Bag 1 Proportion: {}", w1);
+            spdlog::info("  White Bag 2 Proportion: {}", w2);
+            spdlog::info("  Red Bag Proportion: {}", r);
+            spdlog::info("  Blue Bag Proportion: {}", b);
 
             // Update used capacity
             used_volume_white1 += w1 * item.volume;
@@ -210,16 +210,16 @@ int main() {
             used_volume_blue += b * item.volume;
             used_weight_blue += b * item.weight;
         } else {
-            std::cout << "No feasible allocation found for item " << i << "." << std::endl;
+            spdlog::warn("No feasible allocation found for item {}.", i);
         }
 
         Timer.endRecord();
         Timer.print();
         Timer.clearRecord();
     }
-    std::cout<<"White Bag1: Volume "<<used_volume_white1<<" Weight "<<used_weight_white1<<std::endl;
-    std::cout<<"White Bag2: Volume "<<used_volume_white2<<" Weight "<<used_weight_white2<<std::endl;
-    std::cout<<"Blue Bag: Volume "<<used_volume_blue<<" Weight "<<used_weight_blue<<std::endl;
-    std::cout<<"Red Bag: Volume "<<used_volume_red<<" Weight "<<used_weight_red<<std::endl;
+    spdlog::info("White Bag1: Volume {} Weight {}", used_volume_white1, used_weight_white1);
+    spdlog::info("White Bag2: Volume {} Weight {}", used_volume_white2, used_weight_white2);
+    spdlog::info("Blue Bag: Volume {} Weight {}", used_volume_blue, used_weight_blue);
+    spdlog::info("Red Bag: Volume {} Weight {}", used_volume_red, used_weight_red);
     return 0;
 }

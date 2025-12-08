@@ -1,4 +1,4 @@
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include<scheduler.h>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -48,15 +48,15 @@ std::mutex mtx;  // 用于保护共享资源
 void thread_task(int thread_id, int iterations,Docker_scheduler scheduler) {
     for (int i = 0; i < iterations; ++i) {
         std::lock_guard<std::mutex> lock(mtx);
-        std::cout << "Thread " << thread_id << " Running Z3 mutiway scheduling test iteration: " << (i + 1) << std::endl;
+        spdlog::info("Thread {} Running Z3 mutiway scheduling test iteration: {}", thread_id, i + 1);
         Device target = Docker_scheduler::Z3_schedule_v2(YoloV5);
 
         if (target.type == ATLAS_H)
-            std::cout << "Select ATLAS_H" << std::endl;
+            spdlog::info("Select ATLAS_H");
         else if (target.type == ATLAS_L)
-            std::cout << "Select ATLAS_L" << std::endl;
+            spdlog::info("Select ATLAS_L");
         else
-            std::cout << "Select RK3588" << std::endl;
+            spdlog::info("Select RK3588");
 
         DeviceStatus newstatus;
         if(target.type==ATLAS_H){
@@ -77,24 +77,24 @@ TEST(DeviceTest, ParseAndRegisterNodes) {
      // parse and register ATLAS_H
      EXPECT_NO_THROW(device.parseJson(json_atlas_h));
      EXPECT_NO_THROW(Docker_scheduler::RegisNode(device));
-     std::cout << "Atlas-H Node registered successfully\n";
+     spdlog::info("Atlas-H Node registered successfully");
 
     // parse and register ATLAS-L
     EXPECT_NO_THROW(device.parseJson(json_atlas_l));
     EXPECT_NO_THROW(Docker_scheduler::RegisNode(device));
-    std::cout << "Atlas-L Node registered successfully\n";
+    spdlog::info("Atlas-L Node registered successfully");
 
      // parse and register rk3588
      EXPECT_NO_THROW(device.parseJson(json_rk3588));
      EXPECT_NO_THROW(Docker_scheduler::RegisNode(device));
-     std::cout << "RK3588 Node registered successfully\n";
+     spdlog::info("RK3588 Node registered successfully");
      //getchar();
      Docker_scheduler::startDeviceInfoCollection();
 
     // parse and register ATLAS_H
     EXPECT_NO_THROW(device.parseJson(json_atlas_h));
     EXPECT_NO_THROW(Docker_scheduler::Disconnect_device(device));
-    std::cout << "Atlas-H Node removed successfully\n";
+    spdlog::info("Atlas-H Node removed successfully");
 }
 
 TEST(DeviceTest, Disconnect) {

@@ -1,6 +1,6 @@
 #include "MachineInfoCollectorBase.h"
 #include <fstream>
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <boost/uuid/uuid.hpp>
@@ -80,19 +80,19 @@ void MachineInfoCollectorBase::CollectThread() {
         try {
             CollectCpuUsage();
         } catch (const std::exception &e) {
-            std::cerr << "Failed to collect CPU usage: " << e.what() << std::endl;
+            spdlog::error("Failed to collect CPU usage: {}", e.what());
         }
 
         try {
             CollectNetLatency();
         } catch (const std::exception &e) {
-            std::cerr << "Failed to collect network latency: " << e.what() << std::endl;
+            spdlog::error("Failed to collect network latency: {}", e.what());
         }
 
         try {
             CollectNetBandwidth();
         } catch (const std::exception &e) {
-            std::cerr << "Failed to collect network bandwidth: " << e.what() << std::endl;
+            spdlog::error("Failed to collect network bandwidth: {}", e.what());
         }
 
         using namespace std::chrono_literals;
@@ -223,7 +223,7 @@ std::string MachineInfoCollectorBase::GetGlobalId() {
             }
         } catch (const std::exception &e) {
             // Handle any errors in reading/parsing JSON
-            std::cerr << "Error reading or parsing JSON file: " << e.what() << std::endl;
+            spdlog::error("Error reading or parsing JSON file: {}", e.what());
         }
     }
 
@@ -238,7 +238,7 @@ std::string MachineInfoCollectorBase::GetGlobalId() {
         outfile << jsonData.dump(4);  // Save JSON with indentation
         outfile.close();
     } else {
-        std::cerr << "Error opening file for writing" << std::endl;
+        spdlog::error("Error opening file for writing");
     }
 
     return uuid_str;

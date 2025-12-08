@@ -6,7 +6,8 @@
 #define DEVICE_H
 
 #include <atomic>
-#include <iostream>
+#include <spdlog/spdlog.h>
+#include <spdlog/fmt/fmt.h>
 #include <string>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -18,6 +19,26 @@ using json = nlohmann::json;
 enum TaskType{
     YoloV5, MobileNet, Bert, ResNet50, deeplabv3, transcoding, decoding, encoding,Unknown
 };
+
+template <> struct fmt::formatter<TaskType> : formatter<string_view> {
+  template <typename FormatContext>
+  auto format(TaskType c, FormatContext& ctx) const {
+    string_view name = "unknown";
+    switch (c) {
+      case YoloV5:   name = "YoloV5"; break;
+      case MobileNet: name = "MobileNet"; break;
+      case Bert: name = "Bert"; break;
+      case ResNet50: name = "ResNet50"; break;
+      case deeplabv3: name = "deeplabv3"; break;
+      case transcoding: name = "transcoding"; break;
+      case decoding: name = "decoding"; break;
+      case encoding: name = "encoding"; break;
+      case Unknown: name = "Unknown"; break;
+    }
+    return formatter<string_view>::format(name, ctx);
+  }
+};
+
 // 字符串到枚举的转换函数
 TaskType StrToTaskType(const std::string& str);
 
@@ -40,6 +61,21 @@ NLOHMANN_JSON_SERIALIZE_ENUM(TaskType, {
 enum DeviceType{
     RK3588, ATLAS_L, ATLAS_H, ORIN
 };
+
+template <> struct fmt::formatter<DeviceType> : formatter<string_view> {
+  template <typename FormatContext>
+  auto format(DeviceType c, FormatContext& ctx) const {
+    string_view name = "unknown";
+    switch (c) {
+      case RK3588:   name = "RK3588"; break;
+      case ATLAS_L:  name = "ATLAS_L"; break;
+      case ATLAS_H:  name = "ATLAS_H"; break;
+      case ORIN:     name = "ORIN"; break;
+    }
+    return formatter<string_view>::format(name, ctx);
+  }
+};
+
 NLOHMANN_JSON_SERIALIZE_ENUM(DeviceType,{
     {RK3588, "RK3588"},
     {ATLAS_L, "ATLAS_L"},
@@ -78,13 +114,7 @@ struct Device{
                 ty="un_known?";
             break;
         }
-        printf(
-                "Dev_id: %s\t"
-                "dev type:%s\t"
-                "ip:%s\t"
-                "agent port:%d\n",
-                boost::uuids::to_string(global_id).c_str(), ty.c_str(), ip_address.c_str(), agent_port
-        );
+        spdlog::info("Dev_id: {}\tdev type:{}\tip:{}\tagent port:{}", boost::uuids::to_string(global_id), ty, ip_address, agent_port);
     };
     void parseJson(const nlohmann::json& j) {
         try {
@@ -95,7 +125,7 @@ struct Device{
             j.at("ip_address").get_to(ip_address);
             j.at("agent_port").get_to(agent_port);
         } catch (const nlohmann::json::exception& e) {
-            std::cerr << "Error parsing JSON in Device::parseJson: " << e.what() << std::endl;
+            spdlog::error("Error parsing JSON in Device::parseJson: {}", e.what());
         }
     }
 
@@ -123,7 +153,7 @@ struct DeviceStatus{
         j.at("timeWindow").get_to(timeWindow);
     }
     void show(){
-        printf(" mem_used:%f\tcpu_used:%f\txpu_used:%f\n",mem_used,cpu_used,xpu_used);
+        spdlog::info(" mem_used:{}\tcpu_used:{}\txpu_used:{}", mem_used, cpu_used, xpu_used);
     }
     static DeviceStatus from_json_static(const json& j){
         DeviceStatus status;
@@ -191,7 +221,7 @@ struct ImageInfo {
             for (const auto& val : j.at("host_config_binds")) { host_config_binds.push_back(val.get<std::string>()); }
             for (const auto& val : j.at("devices")) { devices.push_back(val.get<std::string>()); }
         } catch (const json::exception& e) {
-            std::cerr << "Error parsing JSON in Image::parseJson: " << e.what() << std::endl;
+            spdlog::error("Error parsing JSON in Image::parseJson: {}", e.what());
         }
     }
 };

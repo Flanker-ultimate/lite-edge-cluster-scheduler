@@ -1,6 +1,6 @@
 #include "MachineInfoCollector.h"
 #include <httplib.h>
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include "device_type.h"
 #include "device.h"
@@ -55,14 +55,14 @@ static bool RegisterNode(MachineInfoCollector &collector) {
 
         Result result = client.Post("/register_node", j.dump(), "application/json");
         if (!result || result->status != OK_200) {
-            std::cerr << "Failed to register node: " << result.error() << std::endl;
+            spdlog::error("Failed to register node: {}", httplib::to_string(result.error()));
             return false;
         }
 
-        std::cout << "Node registered successfully" << std::endl;
+        spdlog::info("Node registered successfully");
         return true;
     } catch (const std::exception &e) {
-        std::cerr << "Failed to register node: " << e.what() << std::endl;
+        spdlog::error("Failed to register node: {}", e.what());
         return false;
     }
 }
@@ -81,14 +81,14 @@ static bool DisconnectNode(MachineInfoCollector &collector) {
 
         Result result = client.Post("/unregister_node", j.dump(), "application/json");
         if (!result || result->status != OK_200) {
-            std::cerr << "Failed to disconnect node: " << result.error() << std::endl;
+            spdlog::error("Failed to disconnect node: {}", httplib::to_string(result.error()));
             return false;
         }
 
-        std::cout << "Node disconnected successfully" << std::endl;
+        spdlog::info("Node disconnected successfully");
         return true;
     } catch (const std::exception &e) {
-        std::cerr << "Failed to disconnect node: " << e.what() << std::endl;
+        spdlog::error("Failed to disconnect node: {}", e.what());
         return false;
     }
 }
@@ -97,7 +97,7 @@ static bool DisconnectNode(MachineInfoCollector &collector) {
 static void AutoConnectThread(MachineInfoCollector &collector, int disconnect_sec, int reconnect_sec) {
     // 如果disconnect_sec <= 0，直接禁用自动断开重连功能
     if (disconnect_sec <= 0) {
-        std::cout << "Auto-disconnect is disabled (disconnect time <= 0)" << std::endl;
+        spdlog::info("Auto-disconnect is disabled (disconnect time <= 0)");
         // 线程进入等待状态，直到程序退出
         while (g_is_running) {
             std::this_thread::sleep_for(1s);
@@ -108,7 +108,7 @@ static void AutoConnectThread(MachineInfoCollector &collector, int disconnect_se
     // 正常执行自动断开重连逻辑
     while (g_is_running) {
         // 步骤1：等待disconnect_sec秒后断开连接
-        std::cout << "Waiting " << disconnect_sec << "s to disconnect..." << std::endl;
+        spdlog::info("Waiting {}s to disconnect...", disconnect_sec);
         for (int i = 0; i < disconnect_sec && g_is_running; ++i) {
             std::this_thread::sleep_for(1s); // 每秒检查一次是否需要退出
         }
@@ -118,7 +118,7 @@ static void AutoConnectThread(MachineInfoCollector &collector, int disconnect_se
         DisconnectNode(collector);
 
         // 步骤2：等待reconnect_sec秒后重新注册
-        std::cout << "Waiting " << reconnect_sec << "s to reconnect..." << std::endl;
+        spdlog::info("Waiting {}s to reconnect...", reconnect_sec);
         for (int i = 0; i < reconnect_sec && g_is_running; ++i) {
             std::this_thread::sleep_for(1s);
         }
@@ -152,7 +152,7 @@ int main(int argc, char* argv[]) {
         try {
             g_gateway_port = std::stoi(env_port);
         } catch (...) {
-            std::cerr << "[WARN] Invalid MASTER_PORT env var, using default: " << g_gateway_port << std::endl;
+            spdlog::warn("Invalid MASTER_PORT env var, using default: {}", g_gateway_port);
         }
     }
 
@@ -168,10 +168,10 @@ int main(int argc, char* argv[]) {
             try {
                 disconnect_sec = std::stoi(argv[++i]);
                 if (disconnect_sec < 0) {
-                    std::cout << "Auto-disconnect will be disabled (negative value provided)" << std::endl;
+                    spdlog::info("Auto-disconnect will be disabled (negative value provided)");
                 }
             } catch (const std::exception& e) {
-                std::cerr << "Invalid disconnect time: " << e.what() << std::endl;
+                spdlog::error("Invalid disconnect time: {}", e.what());
                 PrintHelp(argv[0]);
                 return 1;
             }
@@ -180,13 +180,13 @@ int main(int argc, char* argv[]) {
                 reconnect_sec = std::stoi(argv[++i]);
                 if (reconnect_sec <= 0) throw std::invalid_argument("must be positive");
             } catch (const std::exception& e) {
-                std::cerr << "Invalid reconnect time: " << e.what() << std::endl;
+                spdlog::error("Invalid reconnect time: {}", e.what());
                 PrintHelp(argv[0]);
                 return 1;
             }
         } else if (arg == "--bandwidth-fluctuate") {
             bandwidth_fluctuate = true;
-            std::cout << "Bandwidth fluctuation enabled (range: 50-500Mbps)" << std::endl;
+            spdlog::info("Bandwidth fluctuation enabled (range: 50-500Mbps)");
         }
 
         else if (arg == "--master-ip" && i + 1 < argc) {
@@ -195,7 +195,7 @@ int main(int argc, char* argv[]) {
             try {
                 g_gateway_port = std::stoi(argv[++i]);
             } catch (const std::exception& e) {
-                std::cerr << "Invalid master port: " << e.what() << std::endl;
+                spdlog::error("Invalid master port: {}", e.what());
                 return 1;
             }
         }
@@ -203,24 +203,24 @@ int main(int argc, char* argv[]) {
             PrintHelp(argv[0]);
             return 0;
         } else {
-            std::cerr << "Unknown argument: " << arg << std::endl;
+            spdlog::error("Unknown argument: {}", arg);
             PrintHelp(argv[0]);
             return 1;
         }
     }
 
     // 打印参数配置
-    std::cout << "===== Agent Configuration =====" << std::endl;
-    std::cout << "Master IP: " << g_gateway_ip << std::endl;
-    std::cout << "Master Port: " << g_gateway_port << std::endl;
+    spdlog::info("===== Agent Configuration =====");
+    spdlog::info("Master IP: {}", g_gateway_ip);
+    spdlog::info("Master Port: {}", g_gateway_port);
     if (disconnect_sec <= 0) {
-        std::cout << "Auto-disconnect: Disabled" << std::endl;
+        spdlog::info("Auto-disconnect: Disabled");
     } else {
-        std::cout << "Auto-disconnect time: " << disconnect_sec << "s" << std::endl;
+        spdlog::info("Auto-disconnect time: {}s", disconnect_sec);
     }
-    std::cout << "Auto-reconnect time: " << reconnect_sec << "s" << std::endl;
-    std::cout << "Bandwidth fluctuation: " << (bandwidth_fluctuate ? "Enabled (50-500Mbps)" : "Disabled") << std::endl;
-    std::cout << "===============================\n" << std::endl;
+    spdlog::info("Auto-reconnect time: {}s", reconnect_sec);
+    spdlog::info("Bandwidth fluctuation: {}", (bandwidth_fluctuate ? "Enabled (50-500Mbps)" : "Disabled"));
+    spdlog::info("===============================\n");
 
     // 使用动态地址初始化 MachineInfoCollector
     MachineInfoCollector collector(g_gateway_ip, g_gateway_port);
@@ -228,7 +228,7 @@ int main(int argc, char* argv[]) {
 
     // 初始注册节点
     if (!RegisterNode(collector)) {
-        std::cerr << "Initial registration failed. Exiting." << std::endl;
+        spdlog::error("Initial registration failed. Exiting.");
         return 1;
     }
 
@@ -246,7 +246,7 @@ int main(int argc, char* argv[]) {
         } catch (...) {
             msg = "unknown exception";
         }
-        std::cerr << "exception: " << msg << std::endl;
+        spdlog::error("exception: {}", msg);
         res.set_content(BuildFailed(msg), "application/json");
     });
 
@@ -271,15 +271,15 @@ int main(int argc, char* argv[]) {
         dev_info.net_bandwidth = bandwidth;
 
         // 打印设备信息到终端
-        std::cout << "\n===== 设备信息 =====" << std::endl;
-        std::cout << "CPU 使用率: " << dev_info.cpu_used * 100 << "%" << std::endl;
-        std::cout << "内存使用率: " << dev_info.mem_used * 100 << "%" << std::endl;
-        std::cout << "NPU 使用率: " << dev_info.xpu_used * 100 << "%" << std::endl;
-        std::cout << "网络延迟: " << dev_info.net_latency << " ms" << std::endl;
-        std::cout << "网络带宽: " << dev_info.net_bandwidth << " Mbps" << std::endl;
-        std::cout << "断开等待时间: " << (dev_info.disconnectTime <= 0 ? "Disabled" : std::to_string(dev_info.disconnectTime) + " s") << std::endl;
-        std::cout << "重连等待时间: " << dev_info.reconnectTime << " s" << std::endl;
-        std::cout << "====================\n" << std::endl;
+        spdlog::info("\n===== 设备信息 =====");
+        spdlog::info("CPU 使用率: {}%", dev_info.cpu_used * 100);
+        spdlog::info("内存使用率: {}%", dev_info.mem_used * 100);
+        spdlog::info("NPU 使用率: {}%", dev_info.xpu_used * 100);
+        spdlog::info("网络延迟: {} ms", dev_info.net_latency);
+        spdlog::info("网络带宽: {} Mbps", dev_info.net_bandwidth);
+        spdlog::info("断开等待时间: {}", (dev_info.disconnectTime <= 0 ? "Disabled" : std::to_string(dev_info.disconnectTime) + " s"));
+        spdlog::info("重连等待时间: {} s", dev_info.reconnectTime);
+        spdlog::info("====================\n");
 
         // 构建响应
         std::string result = BuildSuccess(dev_info.to_json());
@@ -287,9 +287,9 @@ int main(int argc, char* argv[]) {
     });
 
     // 启动服务器
-    std::cout << "Starting docker scheduler agent on port " << kAgentPort << std::endl;
+    spdlog::info("Starting docker scheduler agent on port {}", kAgentPort);
     if (!server.listen("0.0.0.0", kAgentPort)) {
-        std::cerr << "Failed to start server" << std::endl;
+        spdlog::error("Failed to start server");
         g_is_running = false; // 通知线程退出
         auto_connect_thread.join(); // 等待线程结束
         return 1;

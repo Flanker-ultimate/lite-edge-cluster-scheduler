@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include "scheduler.h"  // include Docker_scheduler
 
 std::map<TaskType, std::string> taskTypeToString = {
@@ -25,18 +25,19 @@ void DisplayStaticInfo(const std::map<TaskType, std::map<DeviceType, StaticInfoI
         const auto& device_map = task_pair.second;
 
         // output TaskType
-        cout << "TaskType: " << taskTypeToString[task_type] << std::endl;
+        spdlog::info("TaskType: {}", taskTypeToString[task_type]);
 
         for (const auto& device_pair : device_map) {
             DeviceType device_type = device_pair.first;
             const StaticInfoItem& info_item = device_pair.second;
 
             // output DeviceType and StaticInfoItem
-            std::cout << "  DeviceType: " << deviceTypeToString[device_type] << " ";
-            std::cout << "  CPU Usage: " << info_item.taskOverhead.cpu_usage << " ";
-            std::cout << "  NPU Usage: " << info_item.taskOverhead.xpu_usage << " ";
-            std::cout << "  Proc Time: " << info_item.taskOverhead.proc_time << " ms" << " ";
-            std::cout << "  Mem Usage: " << info_item.taskOverhead.mem_usage << " MB" << std::endl;
+            spdlog::info("  DeviceType: {}   CPU Usage: {}   NPU Usage: {}   Proc Time: {} ms   Mem Usage: {} MB",
+                deviceTypeToString[device_type],
+                info_item.taskOverhead.cpu_usage,
+                info_item.taskOverhead.xpu_usage,
+                info_item.taskOverhead.proc_time,
+                info_item.taskOverhead.mem_usage);
         }
     }
 }

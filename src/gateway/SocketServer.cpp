@@ -1,5 +1,6 @@
 #include "SocketServer.h"
-#include <iostream>
+#include <spdlog/spdlog.h>
+#include <cerrno>
 #include <string>
 #include <cstring>
 #include <thread>
@@ -56,12 +57,12 @@ void sendErrorResponse(int client_sock, ERROR& error) {
 int set_nonblocking(int sockfd) {
     int flags = fcntl(sockfd, F_GETFL, 0);
     if (flags == -1) {
-        perror("fcntl F_GETFL");
+        spdlog::error("fcntl F_GETFL: {}", strerror(errno));
         return -1;
     }
     flags |= O_NONBLOCK;
     if (fcntl(sockfd, F_SETFL, flags) == -1) {
-        perror("fcntl F_SETFL");
+        spdlog::error("fcntl F_SETFL: {}", strerror(errno));
         return -1;
     }
     return 0;
@@ -183,8 +184,7 @@ int handle_client(int client_sock) { // Step 1: Read the first line of the HTTP 
             close(client_sock);
             return -1;
         }
-    }else {
-        spdlog::error("parse params failed, firstLine:{}", first_line);
+spdlog::error("parse params failed, firstLine:{}", first_line);
         close(client_sock);
         return -1;
     }
@@ -284,7 +284,7 @@ int handle_client(int client_sock) { // Step 1: Read the first line of the HTTP 
     while (run_flag) {
         int num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (num_events == -1) {
-            perror("Error waiting for epoll events");
+            spdlog::error("Error waiting for epoll events: {}", strerror(errno));
             break;
         }
         handle_epoll_event(epoll_fd, events, num_events, client_sock, target_sock, run_flag);
@@ -306,7 +306,7 @@ int SocketServer::Start() {
     // 1. create socket
     int server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_sockfd < 0) {
-        std::cerr << "Failed to create server socket\n";
+        spdlog::error("Failed to create server socket");
         return 1;
     }
 
@@ -325,18 +325,18 @@ int SocketServer::Start() {
 
     // 4. listen
     if (listen(server_sockfd, 5) < 0) {
-        std::cerr << "Failed to listen on server socket\n";
+        spdlog::error("Failed to listen on server socket");
         close(server_sockfd);
         return 1;
     }
 
-    std::cout << "SocketServer started, listening on port " << this->port << std::endl;
+    spdlog::info("SocketServer started, listening on port {}", this->port);
 
     // 5. Accept client connect
     while (true) {
         int client_sockfd = accept(server_sockfd, nullptr, nullptr);
         if (client_sockfd < 0) {
-            std::cerr << "Failed to accept client connection\n";
+            spdlog::error("Failed to accept client connection");
             continue;
         }
 

@@ -1,4 +1,4 @@
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <vector>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -50,17 +50,17 @@ TEST(DeviceTest, ParseAndRegisterNodes) {
     // parse and register ATLAS_H
     EXPECT_NO_THROW(device.parseJson(json_atlas_h));
     EXPECT_NO_THROW(Docker_scheduler::RegisNode(device));
-    std::cout << "Atlas-H Node registered successfully\n";
+    spdlog::info("Atlas-H Node registered successfully");
 
     // parse and register ATLAS-L
     EXPECT_NO_THROW(device.parseJson(json_atlas_l));
     EXPECT_NO_THROW(Docker_scheduler::RegisNode(device));
-    std::cout << "Atlas-L Node registered successfully\n";
+    spdlog::info("Atlas-L Node registered successfully");
 
      //parse and register rk3588
     EXPECT_NO_THROW(device.parseJson(json_rk3588));
     EXPECT_NO_THROW(Docker_scheduler::RegisNode(device));
-    std::cout << "RK3588 Node registered successfully\n";
+    spdlog::info("RK3588 Node registered successfully");
     //getchar();
 }
 
@@ -73,7 +73,7 @@ TEST(StatusTest, Status_Update) {
     int counter_rk3588=0;
     // loop Z3_schedule 10 times
     for (int i = 0; i < 1000; ++i) {
-        std::cout << "Running Predict test iteration: " << (i + 1) << std::endl;
+        spdlog::info("Running Predict test iteration: {}", i + 1);
         Device target = Docker_scheduler::Model_predict(YoloV5);
         scheduler.display_devstatus(target.global_id);
         DeviceStatus newstatus;
@@ -107,7 +107,7 @@ TEST(StatusTest, Status_Update) {
         }
 
     }
-    cout<<"ATLAS_H: "<<counter_atlas_h<<endl;
-    cout<<"ATLAS_L: "<<counter_atlas_l<<endl;
-    cout<<"RK3588: "<<counter_rk3588<<endl;
+    spdlog::info("ATLAS_H: {}", counter_atlas_h);
+    spdlog::info("ATLAS_L: {}", counter_atlas_l);
+    spdlog::info("RK3588: {}", counter_rk3588);
 }

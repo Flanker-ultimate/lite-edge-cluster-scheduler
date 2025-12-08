@@ -8,6 +8,7 @@ target_link_libraries(
         PRIVATE
         time_tools
         libz3
+        spdlog::spdlog
 )
 
 target_include_directories(
@@ -26,6 +27,7 @@ target_link_libraries(
         PRIVATE
         time_tools
         libz3
+        spdlog::spdlog
 )
 
 target_include_directories(

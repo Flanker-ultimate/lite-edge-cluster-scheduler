@@ -36,6 +36,7 @@ target_link_libraries(docker_scheduler_agent
         httplib::httplib
         nlohmann_json::nlohmann_json
         device_struct
+        spdlog::spdlog
 )
 
 if (${ARCH} STREQUAL "atlas200")

@@ -1,5 +1,5 @@
 #include "c++/z3++.h"
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <vector>
 #include <string>
 #include <iomanip>
@@ -173,16 +173,16 @@ int main() {
     // 求解
     if (opt.check() == sat) {
         model m = opt.get_model();
-        std::cout << "Solution found:" << std::endl;
+        spdlog::info("Solution found:");
         for (size_t i = 0; i < items.size(); ++i) {
-            std::cout << "Item " << i << ":\n";
-            std::cout << "  White Bag 1 Proportion: " << get_double_value(m.eval(proportions[i][0])) << "\n";
-            std::cout << "  White Bag 2 Proportion: " << get_double_value(m.eval(proportions[i][1])) << "\n";
-            std::cout << "  Red Bag Proportion: " << get_double_value(m.eval(proportions[i][2])) << "\n";
-            std::cout << "  Blue Bag Proportion: " << get_double_value(m.eval(proportions[i][3])) << "\n";
+            spdlog::info("Item {}:", i);
+            spdlog::info("  White Bag 1 Proportion: {}", get_double_value(m.eval(proportions[i][0])));
+            spdlog::info("  White Bag 2 Proportion: {}", get_double_value(m.eval(proportions[i][1])));
+            spdlog::info("  Red Bag Proportion: {}", get_double_value(m.eval(proportions[i][2])));
+            spdlog::info("  Blue Bag Proportion: {}", get_double_value(m.eval(proportions[i][3])));
         }
     } else {
-        std::cout << "No solution found." << std::endl;
+        spdlog::warn("No solution found.");
     }
     Timer.endRecord();
     Timer.print();

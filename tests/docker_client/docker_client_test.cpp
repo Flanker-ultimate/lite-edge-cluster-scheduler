@@ -10,6 +10,7 @@
 // Kill                 309  362 339
 // Remove               63 65(force=false) 429(force=true 删除正在运行容器)
 #include <gtest/gtest.h>
+#include <spdlog/spdlog.h>
 #include "TimeRecorder.h"
 #include "DockerClient.h"
 using namespace std;
@@ -35,10 +36,10 @@ protected:
         StartTime.startRecord();
         std::string created_container_id = dc.CreateContainer(param.create_container_param);
         if(created_container_id == "") {
-            std::cout << "create container false" << std::endl;
+            spdlog::error("create container false");
         }else {
             global_container_id=created_container_id;
-            std::cout << "create_container success: [created_container_id=" << created_container_id << "]" << std::endl;
+            spdlog::info("create_container success: [created_container_id={}]", created_container_id);
         }
         StartTime.endRecord();
         StartTime.print();
@@ -54,7 +55,7 @@ protected:
         TimeRecord<chrono::milliseconds> StartTime("StartContainer");
         StartTime.startRecord();
         bool res = dc.StartContainer(container_id);
-        std::cout << "StartContainer invoke: [res=" << res << "]" << std::endl;
+        spdlog::info("StartContainer invoke: [res={}]", res);
         StartTime.endRecord();
         StartTime.print();
         ASSERT_TRUE(res) << "StartContainer failed" << endl;
@@ -68,7 +69,7 @@ protected:
         TimeRecord<chrono::milliseconds> StartTime("PauseContainer");
         StartTime.startRecord();
         bool start_res = dc.PauseContainer(container_id);
-        std::cout << "PauseContainer invoke: [res=" << start_res << "]" << std::endl;
+        spdlog::info("PauseContainer invoke: [res={}]", start_res);
         StartTime.endRecord();
         StartTime.print();
     }
@@ -81,7 +82,7 @@ protected:
         TimeRecord<chrono::milliseconds> StartTime("UnpauseContainer");
         StartTime.startRecord();
         bool start_res = dc.UnpauseContainer(container_id);
-        std::cout << "UnpauseContainer invoke: [res=" << start_res << "]" << std::endl;
+        spdlog::info("UnpauseContainer invoke: [res={}]", start_res);
         StartTime.endRecord();
         StartTime.print();
     }
@@ -95,7 +96,7 @@ protected:
         TimeRecord<chrono::milliseconds> StartTime("StopContainer");
         StartTime.startRecord();
         bool res = dc.StopContainer(container_id);
-        std::cout << "StopContainer invoke: [res=" << res << "]" << std::endl;
+        spdlog::info("StopContainer invoke: [res={}]", res);
         StartTime.endRecord();
         StartTime.print();
         ASSERT_TRUE(res) << "StopContainer failed" << endl;
@@ -110,7 +111,7 @@ protected:
         TimeRecord<chrono::milliseconds> StartTime("KillContainer");
         StartTime.startRecord();
         bool res = dc.KillContainer(container_id);
-        std::cout << "killContainer invoke: [res=" << res << "]" << std::endl;
+        spdlog::info("killContainer invoke: [res={}]", res);
         StartTime.endRecord();
         StartTime.print();
         ASSERT_TRUE(res) << "killContainer failed" << endl;
@@ -125,7 +126,7 @@ protected:
         TimeRecord<chrono::milliseconds> StartTime("RemoveContainer");
         StartTime.startRecord();
         bool res = dc.RemoveContainer(container_id, false, false, false);
-        std::cout << "RemoveContainer invoke: [res=" << res << "]" << std::endl;
+        spdlog::info("RemoveContainer invoke: [res={}]", res);
         StartTime.endRecord();
         StartTime.print();
         ASSERT_TRUE(res) << "assert_true" << endl;
@@ -206,7 +207,7 @@ TEST_P(DockerClientTest, CreateContainer) {
     // TestStopContainer();
     TestKillContainer();
     TestRemoveContainer();
-    cout << endl <<endl;
+    spdlog::info("");
 }
 
 

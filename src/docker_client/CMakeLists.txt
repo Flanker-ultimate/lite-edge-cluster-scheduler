@@ -10,6 +10,7 @@ target_include_directories(docker_client
 target_link_libraries(docker_client
         PUBLIC
         httplib::httplib
+        spdlog::spdlog
         PRIVATE
         nlohmann_json::nlohmann_json
 )

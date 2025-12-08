@@ -1,9 +1,9 @@
 #include "HttpServer.h"
 #include "httplib.h"
 #include <algorithm>
+#include <spdlog/spdlog.h>
 #include <random>
 #include <sstream>
-#include <iostream>
 #include <cstring>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
@@ -33,7 +33,7 @@ bool HttpServer::Start() {
     spdlog::info("HttpServer started success，ip:{} port:{}",this->ip, this->port);
     auto result = svr.listen(this->ip, this->port);
     if (!result) {
-        std::cerr << "HttpServer start failed！" << std::endl;
+        spdlog::error("HttpServer start failed！");
         return false;
     }
     return true;
@@ -116,7 +116,7 @@ void HttpServer::HandleQuest(const httplib::Request &req, httplib::Response &res
     try {
         response = cli.Post("/" + real_url_param, items);
     } catch (const std::exception &e) {
-        std::cerr << req.path << "  Error sending request: " << e.what() << std::endl;
+        spdlog::error("{} Error sending request: {}", req.path, e.what());
         res.status = 500;
         res.set_content("Internal Server Error", "text/plain");
         return;
@@ -151,8 +151,7 @@ void HttpServer::HandleQuest(const httplib::Request &req, httplib::Response &res
         res.status = 502;
         time_record.endRecord();
         res.set_content("Bad Gateway", "text/plain");
-        spdlog::error(
-            "URL: {},task_type_str:{}, real_url_param:{} origin_host_ip: {}:{}, transfer_host_ip: {}:{}, tgt_host_ip: {}:{}, duration_time:{}, Error:{}",
+        spdlog::error("URL: {},task_type_str:{}, real_url_param:{} origin_host_ip: {}:{}, transfer_host_ip: {}:{}, tgt_host_ip: {}:{}, duration_time:{}, Error:{}",
             req.path,
             task_type_str,
             real_url_param,
@@ -198,7 +197,7 @@ void HttpServer::HandleHotStart(const httplib::Request &req, httplib::Response &
 void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &res) {
     namespace fs = std::filesystem;
     fs::path currentPath = fs::current_path();
-    std::cout << "Current path: " << currentPath << std::endl;
+    spdlog::info("Current path: {}", currentPath.string());
     try {
         TimeRecord<std::chrono::milliseconds> time_record_schedule("schedule");
         time_record_schedule.startRecord();
@@ -233,7 +232,7 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
         // 读取图片
         std::ifstream ifs(fullpath, std::ios::binary);
         if (!ifs) {
-            std::cerr << "[错误] 无法读取图片文件: " << fullpath << std::endl;
+            spdlog::error("无法读取图片文件: {}", fullpath);
             res.status = 500;
             res.set_content(R"({"status":"error","msg":"failed to open image file"})", "application/json");
             return;
@@ -270,18 +269,18 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
 
         spdlog::info("Gateway time:{}",time_record_schedule.getDuration());
         if (res_send && res_send->status == 200) {
-            std::cout << "[INFO] 已成功将图片发送到 " << target_ip << std::endl;
+            spdlog::info("已成功将图片发送到 {}", target_ip);
             res.status = 200;
             res.set_content(R"({"status":"send success"})", "application/json");
         } else {
-            std::cerr << "[错误] 发送图片失败" << std::endl;
+            spdlog::error("发送图片失败");
             res.status = 500;
             res.set_content(R"({"status":"error","msg":"send to device failed"})", "application/json");
         }
 
 
     } catch (const std::exception &e) {
-        std::cerr << "[错误] 解析失败: " << e.what() << std::endl;
+        spdlog::error("解析失败: {}", e.what());
         res.status = 400;
         res.set_content(R"({"status":"error","msg":"invalid json"})", "application/json");
     }
@@ -325,7 +324,7 @@ void HttpServer::HandleScheduleRound(const httplib::Request &req, httplib::Respo
         // 读取图片
         std::ifstream ifs(fullpath, std::ios::binary);
         if (!ifs) {
-            std::cerr << "[错误] 无法读取图片文件: " << fullpath << std::endl;
+            spdlog::error("无法读取图片文件: {}", fullpath);
             res.status = 500;
             res.set_content(R"({"status":"error","msg":"failed to open image file"})", "application/json");
             return;
@@ -352,18 +351,18 @@ void HttpServer::HandleScheduleRound(const httplib::Request &req, httplib::Respo
         auto res_send = cli.Post("/recv_task", form_items);
 
         if (res_send && res_send->status == 200) {
-            std::cout << "[INFO] 已成功将图片发送到 " << target_ip << std::endl;
+            spdlog::info("已成功将图片发送到 {}", target_ip);
             res.status = 200;
             res.set_content(R"({"status":"send success"})", "application/json");
         } else {
-            std::cerr << "[错误] 发送图片失败" << std::endl;
+            spdlog::error("发送图片失败");
             res.status = 500;
             res.set_content(R"({"status":"error","msg":"send to device failed"})", "application/json");
         }
 
 
     } catch (const std::exception &e) {
-        std::cerr << "[错误] 解析失败: " << e.what() << std::endl;
+        spdlog::error("解析失败: {}", e.what());
         res.status = 400;
         res.set_content(R"({"status":"error","msg":"invalid json"})", "application/json");
     }
@@ -392,7 +391,7 @@ void HttpServer::HandleDisconnect(const httplib::Request &req, httplib::Response
         }
 
     } catch (const std::exception &e) {
-        std::cerr << "[ERROR] HandleDisconnect exception: " << e.what() << std::endl;
+        spdlog::error("HandleDisconnect exception: {}", e.what());
         res.status = 400;
         res.set_content(R"({"status":"error","msg":"invalid json or internal error"})", "application/json");
     }

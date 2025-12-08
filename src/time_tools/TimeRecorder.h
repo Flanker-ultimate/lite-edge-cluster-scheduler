@@ -1,6 +1,6 @@
 #pragma once
 #include <chrono>
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <typeinfo>
 #include <string>
 #include <utility>
@@ -38,18 +38,18 @@ public:
         } else {
             duration = 0;
             //printf(" No start record! this reocrd %s is 0! \n",recordName);
-            cout<<recordName<<" did not start"<<endl;
+            spdlog::error("{} did not start", recordName);
         }
 
     }
 
     void print() {
         if (typeid(TimeUnit) == typeid(chrono::milliseconds)) {
-            cout << recordName << " time is " << duration << " ms \n";
+            spdlog::info("{} time is {} ms", recordName, duration);
         } else if (typeid(TimeUnit) == typeid(chrono::microseconds)) {
-            cout << recordName << " time is " << duration << " micro++s \n";
+            spdlog::info("{} time is {} micro++s", recordName, duration);
         } else if (typeid(TimeUnit) == typeid(chrono::nanoseconds)) {
-            cout << recordName << " time is " << duration << " ns \n";
+            spdlog::info("{} time is {} ns", recordName, duration);
         }
     }
 

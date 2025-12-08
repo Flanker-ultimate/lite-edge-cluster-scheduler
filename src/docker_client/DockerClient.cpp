@@ -4,7 +4,7 @@
 
 #include "DockerClient.h"
 #include<string>
-#include<iostream>
+#include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 using namespace std;
 // 默认的createContainer的json
@@ -43,7 +43,7 @@ string DockerClient::ListContainers() {
     }else {
         // 错误处理
         auto err = res.error();
-        std::cout << "HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("HTTP error: {}", httplib::to_string(err));
     }
     return "";
 }
@@ -141,25 +141,25 @@ string DockerClient::CreateContainer(string container_name, string image, vector
                 return res_json["Id"];
                 break;
             case httplib::StatusCode::BadRequest_400:
-                cout << "CreateContainer bad parameter" << endl;
+                spdlog::error("CreateContainer bad parameter");
                 break;
             case httplib::StatusCode::NotFound_404:
-                cout << "CreateContainer not sunch image" << res->body << endl;
+                spdlog::error("CreateContainer not sunch image {}", res->body);
                 break;
             case httplib::StatusCode::Conflict_409:
-                cout << "[ERROR] create container failed  " << "[params container_name]:" <<  container_name << " image:"<< image << "[result]:" << res->body << endl;
+                spdlog::error("create container failed  [params container_name]: {} image: {} [result]: {}", container_name, image, res->body);
                 break;
             case httplib::StatusCode::InternalServerError_500:
-                cout << "CreateContainer server errror" << "[result]:" << res->body << endl;
+                spdlog::error("CreateContainer server errror [result]: {}", res->body);
                 break;
             default:
-                cout << "CreateContainer unknow errror [result:" << res->body << "]" << endl;
+                spdlog::error("CreateContainer unknow errror [result: {}]", res->body);
                 break;
         }
     } else {
         // 链接失败等处理
         auto err = res.error();
-        std::cout << "HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("HTTP error: {}", httplib::to_string(err));
     }
     return "";
 }
@@ -191,22 +191,22 @@ bool DockerClient::StopContainer(std::string container_id) {
                 return true;
             break;
             case httplib::StatusCode::NotModified_304:
-                cout << "container already stopped" << endl;
+                spdlog::info("container already stopped");
             break;
             case httplib::StatusCode::NotFound_404:
-                cout << "no such container" << res->body <<endl;
+                spdlog::error("no such container {}", res->body);
             break;
             case httplib::StatusCode::InternalServerError_500:
-                cout << "server errror" << res->body << endl;
+                spdlog::error("server errror {}", res->body);
             break;
             default:
-                cout << "unknow errror [result:" << res->body << "]" << endl;
+                spdlog::error("unknow errror [result: {}]", res->body);
                 break;
         }
     }else {
         // 错误处理
         auto err = res.error();
-        std::cout << "[ignored]stopcontaier api, server close connection before it stop container, HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("[ignored]stopcontaier api, server close connection before it stop container, HTTP error: {}", httplib::to_string(err));
     }
     return false;
 }
@@ -221,22 +221,22 @@ bool DockerClient::StartContainer(string container_id) {
                 return true;
                 break;
             case httplib::StatusCode::NotModified_304:
-                cout << "container already started" << endl;
+                spdlog::info("container already started");
                 break;
             case httplib::StatusCode::NotFound_404:
-                cout << "no such container" << endl;
+                spdlog::error("no such container");
                 break;
             case httplib::StatusCode::InternalServerError_500:
-                cout << "server errror" << res->body << endl;
+                spdlog::error("server errror {}", res->body);
                 break;
             default:
-                cout << "unknow errror [result:" << res->body << "]" << endl;
+                spdlog::error("unknow errror [result: {}]", res->body);
                 break;
         }
     }else {
         // 错误处理
         auto err = res.error();
-        std::cout << "HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("HTTP error: {}", httplib::to_string(err));
     }
     return false;
 }
@@ -250,19 +250,19 @@ bool DockerClient::PauseContainer(string container_id) {
             case httplib::StatusCode::NoContent_204: // no error
                 return true;
             case httplib::StatusCode::NotFound_404:
-                cout << "no such container" << endl;
+                spdlog::error("no such container");
                 break;
             case httplib::StatusCode::InternalServerError_500:
-                cout << "server errror" << res->body << endl;
+                spdlog::error("server errror {}", res->body);
                 break;
             default:
-                cout << "unknow errror [result:" << res->body << "]" << endl;
+                spdlog::error("unknow errror [result: {}]", res->body);
                 break;
         }
     }else {
         // 错误处理
         auto err = res.error();
-        std::cout << "HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("HTTP error: {}", httplib::to_string(err));
     }
     return false;
 }
@@ -276,19 +276,19 @@ bool DockerClient::UnpauseContainer(string container_id) {
             case httplib::StatusCode::NoContent_204: // no error
                 return true;
             case httplib::StatusCode::NotFound_404:
-                cout << "no such container" << endl;
+                spdlog::error("no such container");
             break;
             case httplib::StatusCode::InternalServerError_500:
-                cout << "server errror [result:" << res->body << "]" << endl;
+                spdlog::error("server errror [result: {}]", res->body);
             break;
             default:
-                cout << "unknow errror [result:" << res->body << "]" << endl;
+                spdlog::error("unknow errror [result: {}]", res->body);
                 break;
         }
     }else {
         // 错误处理
         auto err = res.error();
-        std::cout << "HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("HTTP error: {}", httplib::to_string(err));
     }
     return false;
 }
@@ -302,22 +302,22 @@ bool DockerClient::KillContainer(std::string container_id) {
             case httplib::StatusCode::NoContent_204: // no error
                 return true;
             case httplib::StatusCode::NotFound_404:
-                cout << "no such container" << endl;
+                spdlog::error("no such container");
             break;
             case httplib::StatusCode::Conflict_409:
-                cout << "container is not running" << endl;
+                spdlog::error("container is not running");
             break;
             case httplib::StatusCode::InternalServerError_500:
-                cout << "server errror [result:" << res->body << "]" << endl;
+                spdlog::error("server errror [result: {}]", res->body);
             break;
             default:
-                cout << "unknow errror [result:" << res->body << "]" << endl;
+                spdlog::error("unknow errror [result: {}]", res->body);
                 break;
         }
     }else {
         // 错误处理
         auto err = res.error();
-        std::cout << "HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("HTTP error: {}", httplib::to_string(err));
     }
     return false;
 }
@@ -343,21 +343,21 @@ bool DockerClient::RemoveContainer(std::string container_id,bool v, bool force, 
             case httplib::StatusCode::NoContent_204: // no error
                 return true;
             case httplib::StatusCode::BadRequest_400:
-                cout << "bad parameter" << endl;
+                spdlog::error("bad parameter");
             case httplib::StatusCode::NotFound_404:
-                cout << "no such container" << endl;
+                spdlog::error("no such container");
                 break;
             case httplib::StatusCode::InternalServerError_500:
-                cout << "server errror [result:" << res->body << "]" << endl;
+                spdlog::error("server errror [result: {}]", res->body);
                 break;
             default:
-                cout << "unknow errror [result:" << res->body << "]" << endl;
+                spdlog::error("unknow errror [result: {}]", res->body);
                 break;
         }
     }else {
         // 错误处理
         auto err = res.error();
-        std::cout << "HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("HTTP error: {}", httplib::to_string(err));
     }
     return false;
 }
@@ -374,7 +374,7 @@ string DockerClient::ListImages() {
     }else {
         // 错误处理
         auto err = res.error();
-        std::cout << "HTTP error: " << httplib::to_string(err) << std::endl;
+        spdlog::error("HTTP error: {}", httplib::to_string(err));
     }
     return "";
 }
