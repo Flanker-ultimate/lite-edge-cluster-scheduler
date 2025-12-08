@@ -1,0 +1,857 @@
+{
+  "YoloV5": {
+    "RK3588": {
+      "imageInfo": {
+        "container_name": "yolov5_container",
+        "image": "yolov5_infer_rk3588:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+        ],
+        "host_config_binds": [
+        ],
+        "devices": [
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8080,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 43.39,
+        "mem_usage": 0.035,
+        "cpu_usage": 0.05,
+        "xpu_usage": 0.07
+      }
+    },
+    "ATLAS_L": {
+      "imageInfo": {
+        "container_name": "yolov5_container",
+        "image": "yolov5-infer-cpp:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8080,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 63.77,
+        "mem_usage": 0.24,
+        "cpu_usage": 0.09,
+        "xpu_usage": 0.22
+      }
+    },
+    "ATLAS_H": {
+      "imageInfo": {
+        "container_name": "yolov5_container",
+        "image": "yolov5-infer-cpp:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8081,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 32.96,
+        "mem_usage": 0.07,
+        "cpu_usage": 0.08,
+        "xpu_usage": 0.1
+      }
+    }
+  },
+  "MobileNet": {
+    "RK3588": {
+      "imageInfo": {
+        "container_name": "mobilenet_container",
+        "image": "mobilenet_infer_rk3588:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+        ],
+        "host_config_binds": [
+        ],
+        "devices": [
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8080,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 14.95,
+        "mem_usage": 0.015,
+        "cpu_usage": 0.04,
+        "xpu_usage": 0.01
+      }
+    },
+    "ATLAS_L": {
+      "imageInfo": {
+        "container_name": "mobilenet_container",
+        "image": "mobilenetv3:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8080,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 23.02,
+        "mem_usage": 0.08,
+        "cpu_usage": 0.2,
+        "xpu_usage": 0.06
+      }
+    },
+    "ATLAS_H": {
+      "imageInfo": {
+        "container_name": "mobilenet_container",
+        "image": "mobilenetv3:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8080,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 16.07,
+        "mem_usage": 0.02,
+        "cpu_usage": 0.19,
+        "xpu_usage": 0.03
+      }
+    }
+  },
+  "ResNet50": {
+    "RK3588": {
+      "imageInfo": {
+        "container_name": "resnet_container",
+        "image": "resnet_infer_rk3588:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+        ],
+        "host_config_binds": [
+        ],
+        "devices": [
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8080,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 32.18,
+        "mem_usage": 0.045,
+        "cpu_usage": 0.03,
+        "xpu_usage": 0.06
+      }
+    },
+    "ATLAS_L": {
+      "imageInfo": {
+        "container_name": "resnet_container",
+        "image": "resnet50:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8080,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 38.93,
+        "mem_usage": 0.11,
+        "cpu_usage": 0.19,
+        "xpu_usage": 0.2
+      }
+    },
+    "ATLAS_H": {
+      "imageInfo": {
+        "container_name": "resnet_container",
+        "image": "resnet50:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8080,
+        "container_port": 8080,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 23.8,
+        "mem_usage": 0.02,
+        "cpu_usage": 0.19,
+        "xpu_usage": 0.08
+      }
+    }
+  },
+  "Bert": {
+    "ATLAS_L": {
+      "imageInfo": {
+        "container_name": "bert_container",
+        "image": "bert:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 5001,
+        "container_port": 6000,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 144.84,
+        "mem_usage": 0.14,
+        "cpu_usage": 0.03,
+        "xpu_usage": 0.44
+      }
+    },
+    "ATLAS_H": {
+      "imageInfo": {
+        "container_name": "bert_container",
+        "image": "bert:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 5001,
+        "container_port": 6000,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 55.91,
+        "mem_usage": 0.04,
+        "cpu_usage": 0.06,
+        "xpu_usage": 0.42
+      }
+    }
+  },
+  "deeplabv3": {
+    "ATLAS_L": {
+      "imageInfo": {
+        "container_name": "deeplabv3_container",
+        "image": "deeplabv3:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 6002,
+        "container_port": 6002,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 625.99,
+        "mem_usage": 0.16,
+        "cpu_usage": 0.06,
+        "xpu_usage": 0.52
+      }
+    },
+    "ATLAS_H": {
+      "imageInfo": {
+        "container_name": "deeplabv3_container",
+        "image": "deeplabv3:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 6002,
+        "container_port": 6002,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 283.07,
+        "mem_usage": 0.04,
+        "cpu_usage": 0.06,
+        "xpu_usage": 0.43
+      }
+    }
+  },
+  "transcoding": {
+    "ATLAS_L": {
+      "imageInfo": {
+        "container_name": "transcoding_container",
+        "image": "transcoding:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8554,
+        "container_port": 8554,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 1,
+        "mem_usage": 0.08,
+        "cpu_usage": 0.18,
+        "xpu_usage": 0
+      }
+    },
+    "ATLAS_H": {
+      "imageInfo": {
+        "container_name": "transcoding_container",
+        "image": "transcoding:latest",
+        "cmds": [],
+        "args": [],
+        "host_config_privileged": true,
+        "env": [
+          "CEND_VISIBLE_DEVICES=0",
+          "ASCEND_ALLOW_LINK=True"
+        ],
+        "host_config_binds": [
+          "/etc/hdcBasic.cfg:/etc/hdcBasic.cfg",
+          "/usr/lib64/libadump.so:/usr/lib64/libadump.so",
+          "/usr/lib64/libstackcore.so:/usr/lib64/libstackcore.so",
+          "/var/log/ascend_seclog:/var/log/ascend_seclog",
+          "/usr/lib64/libdrvdsmi.so:/usr/lib64/libdrvdsmi.so",
+          "/usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi",
+          "/usr/lib64/aicpu_kernels/:/usr/lib64/aicpu_kernels/",
+          "/usr/lib64/libaicpu_processer.so:/usr/lib64/libaicpu_processer.so",
+          "/etc/ascend_install.info:/etc/ascend_install.info",
+          "/usr/lib64/libdevmmap.so:/usr/lib64/libdevmmap.so",
+          "/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64",
+          "/var/slogd:/var/slogd",
+          "/var/davinci/driver:/var/davinci/driver",
+          "/usr/lib64/libc_sec.so:/usr/lib64/libc_sec.so",
+          "/usr/lib64/libmmpa.so:/usr/lib64/libmmpa.so",
+          "/usr/lib64/libaicpu_prof.so:/usr/lib64/libaicpu_prof.so",
+          "/usr/lib64/libaicpu_scheduler.so:/usr/lib64/libaicpu_scheduler.so",
+          "/usr/lib64/libtsd_eventclient.so:/usr/lib64/libtsd_eventclient.so",
+          "/etc/sys_version.conf:/etc/sys_version.conf",
+          "/usr/lib64/libmpi_dvpp_adapter.so:/usr/lib64/libmpi_dvpp_adapter.so",
+          "/usr/lib64/libascend_hal.so:/usr/lib64/libascend_hal.so",
+          "/var/dmp_daemon:/var/dmp_daemon",
+          "/usr/local/Ascend/driver:/usr/local/Ascend/driver",
+          "/usr/lib64/libslog.so:/usr/lib64/libslog.so",
+          "/usr/local/Ascend/ascend-toolkit:/usr/local/Ascend/ascend-toolkit",
+          "/usr/lib64/libaicpu_sharder.so:/usr/lib64/libaicpu_sharder.so",
+          "/usr/lib64/libdcmi.so:/usr/lib64/libdcmi.so"
+        ],
+        "devices": [
+          "/dev/svm0",
+          "/dev/ts_aisle",
+          "/dev/upgrade",
+          "/dev/sys",
+          "/dev/vdec",
+          "/dev/vpc",
+          "/dev/pngd",
+          "/dev/venc",
+          "/dev/dvpp_cmdlist",
+          "/dev/log_drv"
+        ],
+        "host_ip": "0.0.0.0",
+        "host_port": 8554,
+        "container_port": 8554,
+        "has_tty": false
+      },
+      "taskOverhead": {
+        "proc_time": 1,
+        "mem_usage": 0.03,
+        "cpu_usage": 0.12,
+        "xpu_usage": 0.0
+      }
+    }
+  }
+}

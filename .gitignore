@@ -1,0 +1,13 @@
+cmake-build*/
+.vscode
+.idea
+build/
+_deps/
+src/_deps/
+src/CMakeFiles
+*.tif
+*.txt
+*.png
+*.jpg
+edge-cluster-scheduler/src/modules/master/files/pic/
+src/modules/slave/yolov5-ascend/__pycache__/
