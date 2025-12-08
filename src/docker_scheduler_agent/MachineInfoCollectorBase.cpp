@@ -12,12 +12,6 @@
 
 const char *kConfigFilePath = ".agent_config.json";
 
-
-int random_generator() {
-    // 50 ~ 500
-    return rand() % 450 + 50;
-}
-
 double MachineInfoCollectorBase::GetCpuUsage() {
     std::lock_guard lock(collectorMutex);
 

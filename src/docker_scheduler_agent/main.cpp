@@ -9,9 +9,13 @@
 #include <atomic>
 #include <random>
 #include <cstdlib>
+#include <string>
 
-const char *kGatewayIp = "10.134.74.155";
-const int kGatewayPort = 6666;
+// --- 修改点 1: 将 const char* 硬编码改为全局变量 ---
+// 默认值设为 127.0.0.1，方便本地测试。生产环境建议通过参数覆盖。
+std::string g_gateway_ip = "127.0.0.1";
+int g_gateway_port = 6666;
+
 const int kAgentPort = 8000;
 
 using json = nlohmann::json;
@@ -39,7 +43,8 @@ static std::string BuildFailed(const json &v) { return BuildResult("failed", v);
 
 static bool RegisterNode(MachineInfoCollector &collector) {
     try {
-        Client client(kGatewayIp, kGatewayPort);
+        // --- 修改点 2: 使用全局变量 g_gateway_ip 和 g_gateway_port ---
+        Client client(g_gateway_ip.c_str(), g_gateway_port);
 
         json j = {
                 {"type",       AGENT_DEVICE_TYPE},
@@ -64,7 +69,8 @@ static bool RegisterNode(MachineInfoCollector &collector) {
 
 static bool DisconnectNode(MachineInfoCollector &collector) {
     try {
-        Client client(kGatewayIp, kGatewayPort);
+        // --- 修改点 3: 使用全局变量 ---
+        Client client(g_gateway_ip.c_str(), g_gateway_port);
 
         json j = {
                 {"type",       AGENT_DEVICE_TYPE},
@@ -127,13 +133,29 @@ static void AutoConnectThread(MachineInfoCollector &collector, int disconnect_se
 static void PrintHelp(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options]\n"
               << "Options:\n"
+              << "  --master-ip <ip>         Set Master/Gateway IP (env: MASTER_IP, default: 127.0.0.1)\n"
+              << "  --master-port <port>     Set Master/Gateway Port (env: MASTER_PORT, default: 6666)\n"
               << "  --disconnect <seconds>   Set auto-disconnect time (default: 30s, <=0 to disable)\n"
               << "  --reconnect <seconds>    Set auto-reconnect time (default: 20s)\n"
-              << "  --bandwidth-fluctuate    Enable network bandwidth fluctuation simulation (50-500Mbps)\n"  // 更新帮助信息
+              << "  --bandwidth-fluctuate    Enable network bandwidth fluctuation simulation (50-500Mbps)\n"
               << "  --help                   Show this help message\n" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
+    // --- 修改点 4: 优先读取环境变量 ---
+    const char* env_ip = std::getenv("MASTER_IP");
+    if (env_ip) {
+        g_gateway_ip = env_ip;
+    }
+    const char* env_port = std::getenv("MASTER_PORT");
+    if (env_port) {
+        try {
+            g_gateway_port = std::stoi(env_port);
+        } catch (...) {
+            std::cerr << "[WARN] Invalid MASTER_PORT env var, using default: " << g_gateway_port << std::endl;
+        }
+    }
+
     // 默认参数设置
     int disconnect_sec = 30;    // 默认断连时间30秒
     int reconnect_sec = 20;     // 默认重连时间20秒
@@ -145,7 +167,6 @@ int main(int argc, char* argv[]) {
         if (arg == "--disconnect" && i + 1 < argc) {
             try {
                 disconnect_sec = std::stoi(argv[++i]);
-                // 允许disconnect_sec <=0（禁用自动断开），不再抛出异常
                 if (disconnect_sec < 0) {
                     std::cout << "Auto-disconnect will be disabled (negative value provided)" << std::endl;
                 }
@@ -165,8 +186,20 @@ int main(int argc, char* argv[]) {
             }
         } else if (arg == "--bandwidth-fluctuate") {
             bandwidth_fluctuate = true;
-            std::cout << "Bandwidth fluctuation enabled (range: 50-500Mbps)" << std::endl;  // 启动时提示波动范围
-        } else if (arg == "--help") {
+            std::cout << "Bandwidth fluctuation enabled (range: 50-500Mbps)" << std::endl;
+        }
+
+        else if (arg == "--master-ip" && i + 1 < argc) {
+            g_gateway_ip = argv[++i];
+        } else if (arg == "--master-port" && i + 1 < argc) {
+            try {
+                g_gateway_port = std::stoi(argv[++i]);
+            } catch (const std::exception& e) {
+                std::cerr << "Invalid master port: " << e.what() << std::endl;
+                return 1;
+            }
+        }
+        else if (arg == "--help") {
             PrintHelp(argv[0]);
             return 0;
         } else {
@@ -176,22 +209,26 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 打印参数配置（明确显示是否禁用自动断开）
+    // 打印参数配置
     std::cout << "===== Agent Configuration =====" << std::endl;
+    std::cout << "Master IP: " << g_gateway_ip << std::endl;
+    std::cout << "Master Port: " << g_gateway_port << std::endl;
     if (disconnect_sec <= 0) {
         std::cout << "Auto-disconnect: Disabled" << std::endl;
     } else {
         std::cout << "Auto-disconnect time: " << disconnect_sec << "s" << std::endl;
     }
     std::cout << "Auto-reconnect time: " << reconnect_sec << "s" << std::endl;
-    std::cout << "Bandwidth fluctuation: " << (bandwidth_fluctuate ? "Enabled (50-500Mbps)" : "Disabled") << std::endl;  // 显示波动范围
+    std::cout << "Bandwidth fluctuation: " << (bandwidth_fluctuate ? "Enabled (50-500Mbps)" : "Disabled") << std::endl;
     std::cout << "===============================\n" << std::endl;
 
-    MachineInfoCollector collector(kGatewayIp, kGatewayPort);
+    // 使用动态地址初始化 MachineInfoCollector
+    MachineInfoCollector collector(g_gateway_ip, g_gateway_port);
     httplib::Server server;
 
     // 初始注册节点
     if (!RegisterNode(collector)) {
+        std::cerr << "Initial registration failed. Exiting." << std::endl;
         return 1;
     }
 
@@ -216,20 +253,20 @@ int main(int argc, char* argv[]) {
     // 设备信息接口（附带打印）
     server.Get("/usage/device_info", [&collector, bandwidth_fluctuate, disconnect_sec, reconnect_sec](const httplib::Request &, httplib::Response &res) {
         DeviceStatus dev_info;
-        dev_info.disconnectTime = disconnect_sec;  // 使用参数值（可能为<=0表示禁用）
-        dev_info.reconnectTime = reconnect_sec;    // 使用参数值
+        dev_info.disconnectTime = disconnect_sec;
+        dev_info.reconnectTime = reconnect_sec;
         dev_info.timeWindow = 5;
         dev_info.cpu_used = collector.GetCpuUsage();
         dev_info.mem_used = collector.GetMemoryUsage();
         dev_info.xpu_used = collector.GetNpuUsage();
         dev_info.net_latency = collector.GetNetLatency(); // ms
 
-        // 处理带宽波动（直接生成50-500Mbps的随机值）
+        // 处理带宽波动
         double bandwidth;
         if (bandwidth_fluctuate) {
-            bandwidth = bandwidth_dist(gen);  // 应用50-500Mbps的随机波动
+            bandwidth = bandwidth_dist(gen);
         } else {
-            bandwidth = collector.GetNetBandwidth(); // 原始带宽值
+            bandwidth = collector.GetNetBandwidth();
         }
         dev_info.net_bandwidth = bandwidth;
 
