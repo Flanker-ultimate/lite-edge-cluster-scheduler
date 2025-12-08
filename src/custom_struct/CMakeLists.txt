@@ -1,0 +1,2 @@
+add_subdirectory(ThreadSafeMap)
+add_subdirectory(device_struct)

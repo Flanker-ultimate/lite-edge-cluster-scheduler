@@ -11,7 +11,7 @@
 #include <cstdlib>
 #include <string>
 
-// --- 修改点 1: 将 const char* 硬编码改为全局变量 ---
+// 将 const char* 硬编码改为全局变量
 // 默认值设为 127.0.0.1，方便本地测试。生产环境建议通过参数覆盖。
 std::string g_gateway_ip = "127.0.0.1";
 int g_gateway_port = 6666;
