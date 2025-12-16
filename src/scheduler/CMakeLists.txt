@@ -5,9 +5,6 @@ add_library(scheduler
 target_include_directories(scheduler
         INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        PUBLIC
-        "${Z3_SOURCE_DIR}/src/api/c++"
-#        /root/yuezhixin/onnxruntime-linux-aarch64-1.20.1/include
 )
 
 target_link_libraries(scheduler
@@ -15,7 +12,6 @@ target_link_libraries(scheduler
         httplib::httplib
         nlohmann_json::nlohmann_json
         device_struct
-        libz3
         spdlog::spdlog
         PRIVATE
         docker_client

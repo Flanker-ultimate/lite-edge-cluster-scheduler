@@ -5,7 +5,8 @@
 #include<thread>
 #include<chrono>
 #include <DockerClient.h>
-#include <random>
+#include <limits>
+#include <stdexcept>
 std::map<TaskType, std::map<DeviceType, StaticInfoItem> > Docker_scheduler::static_info; // static task info
 
 std::shared_mutex Docker_scheduler::devs_mutex; //
@@ -15,31 +16,11 @@ std::map<DeviceID, DeviceStatus> Docker_scheduler::device_status; // dynamic dev
 
 // std::shared_mutex Docker_scheduler::td_map_mutex_; // Thread-safe mutex for TDMap
 std::map<TaskType, std::map<DeviceID, DevSrvInfos> > Docker_scheduler::tdMap;
-z3::context Docker_scheduler::c;
-std::mutex Docker_scheduler::z3_mutex;
 // onnx
 //Ort::Env Docker_scheduler::env(ORT_LOGGING_LEVEL_WARNING, "OnnxModel");
 //Ort::Session* Docker_scheduler::onnx_session = nullptr;
 bool Docker_scheduler::is_model_loaded = false;
 size_t Docker_scheduler::rr_index = 0;
-double get_double_value(const expr &e) {
-    if (e.is_numeral()) {
-        if (e.is_int()) {
-            return e.get_numeral_int();
-        } else {
-            int num = e.numerator().get_numeral_int();
-            int denom = e.denominator().get_numeral_int();
-            return static_cast<double>(num) / denom;
-        }
-    }
-    return 0.0;
-}
-
-std::string double_to_string(double value) {
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(6) << value;
-    return oss.str();
-}
 
 Docker_scheduler::Docker_scheduler() {
 }
@@ -286,13 +267,13 @@ std::optional<SrvInfo> Docker_scheduler::getOrCrtSrvByTType(TaskType ttype) {
         spdlog::error("No available service nodes to support this task type:{}", to_string(nlohmann::json(ttype)));
         return std::nullopt;
     }
-    // step 1: use z3s get deviceID
-    TimeRecord<chrono::milliseconds> z3("z3");
-    z3.startRecord();
+    // step 1: select target device
+    TimeRecord<chrono::milliseconds> schedule_timer("schedule_select");
+    schedule_timer.startRecord();
     Device tgt_dev = getTgtDevByTtypeAndDevIds(ttype);
-    z3.endRecord();
-    spdlog::info("z3 cost_time:{}", z3.getDuration());
-    z3.clearRecord();
+    schedule_timer.endRecord();
+    spdlog::info("scheduler selection cost_time:{}", schedule_timer.getDuration());
+    schedule_timer.clearRecord();
 
     // TODO deal no Device from schedule
     // judege there are creating Sr v
@@ -394,19 +375,78 @@ Device Docker_scheduler::getTgtDevByTtype(TaskType ttype) {
 }
 
 Device Docker_scheduler::getTgtDevByTtypeAndDevIds(TaskType ttype) {
-    static int callCount = 0;
-    static Device tgt_dev;
-    //return Z3_simulate_schedule(ttype, 0, 1, 0); //ATLAS-H ATLAS-L RK3588
-    //tgt_dev = Z3_schedule_v2(ttype);
-    //tgt_dev = Model_predict(ttype);
-    tgt_dev = Z3_schedule_v2(ttype);
-    return tgt_dev;
+    std::vector<DeviceID> deviceIDs;
+    for (const auto &pair: tdMap[ttype]) {
+        deviceIDs.push_back(pair.first);
+    }
+    return getTgtDevByTtypeAndDevIds(ttype, deviceIDs);
 }
 
 
 Device Docker_scheduler::getTgtDevByTtypeAndDevIds(TaskType ttype, vector<DeviceID> devIds) {
-    DeviceID tgt_dev_id = devIds[0];
-    return Z3_schedule_v2(ttype);
+    try {
+        return selectDeviceByLoad(devIds);
+    } catch (const std::exception& e) {
+        spdlog::warn("Load-based scheduling failed for task {}: {}. Falling back to round robin.", static_cast<int>(ttype), e.what());
+        if (!devIds.empty()) {
+            auto fallback = device_static_info.find(devIds.front());
+            if (fallback != device_static_info.end()) {
+                return fallback->second;
+            }
+        }
+        return RoundRobin_Schedule(ttype);
+    }
+}
+
+Device Docker_scheduler::selectDeviceByLoad(const std::vector<DeviceID>& devIds) {
+    if (devIds.empty()) {
+        throw std::runtime_error("No candidate devices available for scheduling.");
+    }
+
+    const double w_cpu = 0.3;
+    const double w_mem = 0.1;
+    const double w_xpu = 0.4;
+    const double w_bandwidth = 1;
+    const double w_net_latency = 1;
+
+    DeviceID best_device{};
+    double min_load = std::numeric_limits<double>::max();
+    bool found = false;
+
+    for (const auto& device_id : devIds) {
+        std::shared_lock<std::shared_mutex> lock(devs_mutex);
+        auto it = device_status.find(device_id);
+        auto dev_it = device_static_info.find(device_id);
+        if (it == device_status.end() || dev_it == device_static_info.end()) {
+            continue;
+        }
+        const auto& status = it->second;
+        double cpu_val = status.cpu_used;
+        double mem_val = status.mem_used;
+        double xpu_val = status.xpu_used;
+        double bandwidth_val = status.net_bandwidth;
+        double net_latency_val = status.net_latency;
+        double load = w_cpu * cpu_val +
+                      w_mem * mem_val +
+                      w_xpu * xpu_val +
+                      w_bandwidth * bandwidth_val +
+                      w_net_latency * net_latency_val;
+
+        if (load < min_load) {
+            min_load = load;
+            best_device = device_id;
+            found = true;
+        }
+        spdlog::info("calculate device {}", dev_it->second.ip_address);
+    }
+
+    if (!found) {
+        throw std::runtime_error("No device statuses available for scheduling.");
+    }
+
+    const auto selected = device_static_info.at(best_device);
+    spdlog::info("Selected device: {}", selected.ip_address);
+    return selected;
 }
 
 
@@ -414,300 +454,22 @@ std::map<TaskType, std::map<DeviceType, StaticInfoItem> > Docker_scheduler::getS
     return static_info;
 }
 
-//Device Docker_scheduler::Z3_schedule(TaskType Ttype) {
-//    std::cout << "Executing Z3_schedule..." << std::endl;
-//    TimeRecord<chrono::milliseconds> z3("z3");
-//    z3.startRecord();
-//    // 创建 Z3 上下文与优化器
-//    context c;
-//    optimize opt(c);
-//
-//    // 保存设备的 Z3 变量和其对应的负载表达式
-//    std::map<DeviceID, std::optional<expr>> device_cpu_load_vars;
-//    std::map<DeviceID, std::optional<expr>> device_mem_load_vars;
-//    std::map<DeviceID, std::optional<expr>> device_xpu_load_vars;
-//
-//    std::vector<expr> load_differences;
-//
-//    // 为每个设备创建负载变量
-//    for (const auto& [device_id, status] : device_status) {
-//        device_cpu_load_vars[device_id] = c.real_val(std::to_string(status.cpu_used).c_str());
-//        device_mem_load_vars[device_id] = c.real_val(std::to_string(status.mem_used).c_str());
-//        device_xpu_load_vars[device_id] = c.real_val(std::to_string(status.xpu_used).c_str());
-//    }
-//
-//    // 添加任务的 Profiling 数据为约束
-//    expr maxV = c.real_val(double_to_string(1.0).c_str());
-//    const auto& task_profiling = static_info[Ttype];
-//    for (const auto& [device_type, profiling_info] : task_profiling) {
-//        for (const auto& [device_id, status] : device_status) {
-//            if (device_static_info[device_id].type == device_type) {
-//                // 约束：任务的资源需求不能超过设备剩余容量
-//                expr prof_cpu = c.real_val(double_to_string(profiling_info.taskOverhead.cpu_usage).c_str());
-//                expr prof_mem = c.real_val(double_to_string(profiling_info.taskOverhead.mem_usage).c_str());
-//                expr prof_xpu = c.real_val(double_to_string(profiling_info.taskOverhead.xpu_usage).c_str());
-//
-//                expr cpu = *device_cpu_load_vars[device_id] + prof_cpu;
-//                expr mem = *device_mem_load_vars[device_id] + prof_mem;
-//                expr xpu = *device_xpu_load_vars[device_id] + prof_xpu;
-//                if(device_type==DeviceType::ATLAS_L){//针对低算力板子做约束
-//                    z3::expr factor = c.real_val("1.5");
-//                    cpu = cpu * factor;
-//                    mem = mem * factor;
-//                    xpu = xpu * factor;
-//                }
-//
-//                // std::cout << "Initial load for Device " << boost::uuids::to_string(device_id)
-//                //         << " CPU: " << get_double_value(*device_cpu_load_vars[device_id])
-//                //         << " MEM: " << get_double_value(*device_mem_load_vars[device_id])
-//                //         << " XPU: " << get_double_value(*device_xpu_load_vars[device_id])
-//                //         << std::endl;
-//                // std::cout << "Task Profiling Data for Device " << boost::uuids::to_string(device_id)
-//                //         << " CPU: " << get_double_value(prof_cpu)
-//                //         << " MEM: " << get_double_value(prof_mem)
-//                //         << " XPU: " << get_double_value(prof_xpu)
-//                //         << std::endl;
-//                // std::cout << "Estimated load exprs for Device " << boost::uuids::to_string(device_id)
-//                //         << " Estimated CPU: " << get_double_value(cpu)
-//                //         << " Estimated MEM: " << get_double_value(mem)
-//                //         << " Estimated XPU: " << get_double_value(xpu)
-//                //         << std::endl;
-//                //getchar();
-//                opt.add(cpu <= maxV);
-//                opt.add(mem <= maxV);
-//                opt.add(xpu <= maxV);
-//            }
-//        }
-//    }
-//
-//
-//    expr weighted_load = c.real_val(0);
-//    for (const auto& [device_id, load_var] : device_cpu_load_vars) {
-//        weighted_load = weighted_load +
-//                        (0.33 * *device_cpu_load_vars[device_id] +
-//                        0.33 * *device_mem_load_vars[device_id] +
-//                        0.33 * *device_xpu_load_vars[device_id]);
-//    }
-//    opt.minimize(weighted_load);
-//
-//    // 求解
-//    if (opt.check() == sat) {
-//        model m = opt.get_model();
-//        DeviceID selected_device_id;
-//        double min_load = std::numeric_limits<double>::max();
-//
-//        // 查找负载最小的设备
-//        for (const auto& [device_id, load_var] : device_cpu_load_vars) {
-//            double cpu_load = get_double_value(m.eval(*load_var));
-//            double mem_load = get_double_value(m.eval(*device_mem_load_vars[device_id]));
-//            double xpu_load = get_double_value(m.eval(*device_xpu_load_vars[device_id]));
-//            double total_load = cpu_load + mem_load + xpu_load;
-//        //     std::cout << "Device status after schedule" << boost::uuids::to_string(device_id)
-//        //   << " CPU: " << get_double_value(m.eval(*load_var))
-//        //   << " MEM: " << get_double_value(m.eval(*device_mem_load_vars[device_id]))
-//        //   << " XPU: " << get_double_value(m.eval(*device_xpu_load_vars[device_id]))
-//        //   << std::endl;
-//        //     getchar();
-//            if (cpu_load <= 1.0 && mem_load <= 1.0 && xpu_load <= 1.0) { // 确保约束生效
-//                double total_load = cpu_load + mem_load + xpu_load;
-//                if (total_load < min_load) {
-//                    min_load = total_load;
-//                    selected_device_id = device_id;
-//                }
-//            }
-//        }
-//
-//        std::cout << "Selected device with load: " << min_load << std::endl;
-//        z3.endRecord();
-//        z3.print();
-//        z3.clearRecord();
-//        return device_static_info[selected_device_id];
-//    } else {
-//        z3.endRecord();
-//        z3.print();
-//        z3.clearRecord();
-//        DeviceID selected_device_id = device_static_info.begin()->first;
-//        cout<<"Z3 could not find a suitable device, select the first device by default."<<endl;
-//        return device_static_info[selected_device_id]; // 默认返回第一个设备
-//        //throw std::runtime_error("Z3 could not find a suitable device.");
-//    }
-//}
-
-//尝试修改调度单位为单个任务
-Device Docker_scheduler::Z3_schedule_v2(TaskType Ttype){
-    std::lock_guard<std::mutex> lock(z3_mutex);
-    //std::cout << "Executing Z3_schedule..." << std::endl;
-
-    optimize opt(c);
-
-    // 保存设备的 Z3 变量和其对应的负载表达式
-    std::map<DeviceID, std::optional<expr>> device_cpu_load_vars;
-    std::map<DeviceID, std::optional<expr>> device_mem_load_vars;
-    std::map<DeviceID, std::optional<expr>> device_xpu_load_vars;
-
-    std::vector<expr> load_differences;
-
-    // 为每个设备创建负载变量
-    for (const auto& [device_id, status] : device_status) {
-        device_cpu_load_vars[device_id] = c.real_val(std::to_string(status.cpu_used).c_str());
-        device_mem_load_vars[device_id] = c.real_val(std::to_string(status.mem_used).c_str());
-        device_xpu_load_vars[device_id] = c.real_val(std::to_string(status.xpu_used).c_str());
-    }
-
-    // 添加任务的 Profiling 数据为约束
-    expr maxV = c.real_val(double_to_string(1.0).c_str());
-    const auto& task_profiling = static_info[Ttype];
-    
-    for (const auto& [device_type, profiling_info] : task_profiling) {
-        for (const auto& [device_id, status] : device_status) {
-            if (device_static_info[device_id].type == device_type) {
-                // 约束：任务的资源需求不能超过设备剩余容量
-                expr prof_cpu = c.real_val(double_to_string(profiling_info.taskOverhead.cpu_usage).c_str());
-                expr prof_mem = c.real_val(double_to_string(profiling_info.taskOverhead.mem_usage).c_str());
-                expr prof_xpu = c.real_val(double_to_string(profiling_info.taskOverhead.xpu_usage).c_str());
-                
-                //首先判断是否有任务在运行，如果没有意味着需要冷启动，则应该将profiling数据加入约束
-                if(tdMap[Ttype][device_id].dev_srv_info_status == NoExist){
-                    expr cpu = *device_cpu_load_vars[device_id] + prof_cpu;
-                    expr mem = *device_mem_load_vars[device_id] + prof_mem;
-                    expr xpu = *device_xpu_load_vars[device_id] + prof_xpu;
-                    device_cpu_load_vars[device_id] = cpu;
-                    device_mem_load_vars[device_id] = mem;
-                    device_xpu_load_vars[device_id] = xpu;
-                    opt.add(cpu <= maxV);
-                    opt.add(mem <= maxV);
-                    opt.add(xpu <= maxV);
-                }else{
-                    //如果有任务在运行，就不需要加入profiling数据
-                    expr cpu = *device_cpu_load_vars[device_id];
-                    expr mem = *device_mem_load_vars[device_id];
-                    expr xpu = *device_xpu_load_vars[device_id];
-//                    if(device_type==DeviceType::ATLAS_L){//针对低算力板子做约束
-//                        z3::expr factor = c.real_val("1.5");
-//                        cpu = cpu * factor;
-//                        mem = mem * factor;
-//                        xpu = xpu * factor;
-//                        cout<<"choose atlas_l"<<endl;
-//                    }
-                    opt.add(cpu <= maxV);
-                    opt.add(mem <= maxV);
-                    opt.add(xpu <= maxV);
-
-                    spdlog::info("Estimated load exprs for Device {} Estimated CPU: {} Estimated MEM: {} Estimated XPU: {}", boost::uuids::to_string(device_id), get_double_value(cpu), get_double_value(mem), get_double_value(xpu));
-                }
-
-
-                // std::cout << "Initial load for Device " << boost::uuids::to_string(device_id)
-                //         << " CPU: " << get_double_value(*device_cpu_load_vars[device_id])
-                //         << " MEM: " << get_double_value(*device_mem_load_vars[device_id])
-                //         << " XPU: " << get_double_value(*device_xpu_load_vars[device_id])
-                //         << std::endl;
-                // std::cout << "Task Profiling Data for Device " << boost::uuids::to_string(device_id)
-                //         << " CPU: " << get_double_value(prof_cpu)
-                //         << " MEM: " << get_double_value(prof_mem)
-                //         << " XPU: " << get_double_value(prof_xpu)
-                //         << std::endl;
-                // std::cout << "Estimated load exprs for Device " << boost::uuids::to_string(device_id)
-                //         << " Estimated CPU: " << get_double_value(cpu)
-                //         << " Estimated MEM: " << get_double_value(mem)
-                //         << " Estimated XPU: " << get_double_value(xpu)
-                //         << std::endl;
-                //getchar();
-            }
-        }
-    }
-    
-
-    expr weighted_load = c.real_val(0);
-    for (const auto& [device_id, load_var] : device_cpu_load_vars) {
-        weighted_load = weighted_load +
-                        (0.5 * *device_cpu_load_vars[device_id] +
-                        0.0 * *device_mem_load_vars[device_id] +
-                        0.5 * *device_xpu_load_vars[device_id]);
-    }
-    opt.minimize(weighted_load);
-
-    // 求解
-    if (opt.check() == sat) {
-        model m = opt.get_model();
-        DeviceID selected_device_id;
-        double min_load = std::numeric_limits<double>::max();
-
-        // 查找负载最小的设备
-        for (const auto& [device_id, load_var] : device_cpu_load_vars) {
-            double cpu_load = get_double_value(m.eval(*load_var));
-            double mem_load = get_double_value(m.eval(*device_mem_load_vars[device_id]));
-            double xpu_load = get_double_value(m.eval(*device_xpu_load_vars[device_id]));
-            //double total_load = cpu_load + xpu_load;
-//            std::cout << "Device status after schedule" << boost::uuids::to_string(device_id)
-//          << " CPU: " << get_double_value(m.eval(*load_var))
-//          << " MEM: " << get_double_value(m.eval(*device_mem_load_vars[device_id]))
-//          << " XPU: " << get_double_value(m.eval(*device_xpu_load_vars[device_id]))
-//          << std::endl;
-            //getchar();
-            if (cpu_load <= 1.0 && mem_load <= 1.0 && xpu_load <= 1.0) { // 确保约束生效
-                double total_load = cpu_load+ xpu_load;
-                if (total_load < min_load) {
-                    min_load = total_load;
-                    selected_device_id = device_id;
-                }
-            }else{
-                throw std::runtime_error("Z3 could not find a suitable device.");
-            }
-
-        }
-
-        spdlog::info("Selected device: {} with load: {}", boost::uuids::to_string(selected_device_id), min_load);
-
-        return device_static_info[selected_device_id];
-    } else {
-        DeviceID selected_device_id = device_static_info.begin()->first;
-        spdlog::warn("Z3 could not find a suitable device, select the first device by default.");
-        return device_static_info[selected_device_id]; // 默认返回第一个设备
-    }
-}
-    
-
-Device Docker_scheduler::Z3_simulate_schedule(TaskType Ttype,float prob1, float prob2, float prob3) {
-     //find device_static_info and print dev informations
+Device Docker_scheduler::Schedule(TaskType Ttype) {
     std::vector<DeviceID> device_ids;
-    for (const auto &[device_id, device]: device_static_info) {
-        // print dev information
-        //std::cout << "Device ID: " << device_id << ", Type: " << device.type << std::endl;
-        device_ids.push_back(device_id);
-    }
-    // check the number of devices
-    // if (device_ids.size() < 3) {
-    //     throw std::runtime_error("设备数量不足3个，无法根据概率选择设备");
-    // }
-
-    // check the sum of probabilities
-    if (prob1 + prob2 + prob3 != 1.0f) {
-        throw std::invalid_argument("输入的概率参数不合法：prob1 + prob2 + prob3 必须等于 1");
-    }
-
-    // produce a random number
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dis(0.0, 1.0);
-
-    float random_value = dis(gen);
-
-// choose the device based on the random value
-    for (const auto &[device_id, device] : device_static_info) {
-        if (device.type == DeviceType::ATLAS_H && random_value >= 0.0f && random_value < prob1) {
-            spdlog::info("DEVICE ATLAS-H");
-            return device;
-        } else if (device.type == DeviceType::ATLAS_L && random_value >= prob1 && random_value < prob1 + prob2) {
-            spdlog::info("DEVICE ATLAS-L");
-            return device;
-        } else if (device.type == DeviceType::RK3588 && random_value >= prob1 + prob2 && random_value < 1.0f) {
-            spdlog::info("DEVICE RK3588");
-            return device;
+    {
+        std::shared_lock<std::shared_mutex> lock(devs_mutex);
+        device_ids.reserve(device_status.size());
+        for (const auto& [device_id, _] : device_status) {
+            device_ids.push_back(device_id);
         }
     }
-    throw std::runtime_error("can not decide a device");
 
+    try {
+        return selectDeviceByLoad(device_ids);
+    } catch (const std::exception& e) {
+        spdlog::warn("Schedule fallback to round robin: {}", e.what());
+        return RoundRobin_Schedule(Ttype);
+    }
 }
 
 struct Predict_data {
@@ -880,48 +642,7 @@ Device Docker_scheduler::Pic_Schedule(TaskType Ttype) {
         }
     } // 锁在这里释放，之后不再持有
 
-    // 假设权重
-    const double w_cpu = 0.3;
-    const double w_mem = 0.1;
-    const double w_xpu = 0.4;
-    const double w_bandwidth = 1;
-    const double w_net_latency = 1;
-    const double w_runtime = 0.2;
-
-    //选出负载最低的设备
-    DeviceID best_device;
-    double min_load = std::numeric_limits<double>::max();
-    // 遍历所有设备
-    for (const auto& device_id : device_ids) {
-        std::shared_lock<std::shared_mutex> lock(devs_mutex);
-        auto it = device_status.find(device_id);
-        if (it == device_status.end()) {
-            // 在这期间设备可能已被删除，跳过
-            continue;
-        }
-        const auto& status = it->second;
-        double cpu_val = status.cpu_used;
-        double mem_val = status.mem_used;
-        double xpu_val = status.xpu_used;
-        double bandwidth_val = status.net_bandwidth;
-        double net_latency_val=status.net_latency;
-        //double last_runtime_val=status.last_runtime;
-        // 计算加权负载
-        double load = w_cpu * cpu_val +
-                      w_mem * mem_val +
-                      w_xpu * xpu_val +
-                      w_bandwidth * bandwidth_val +
-                      w_net_latency * net_latency_val;
-
-        if (load < min_load) {
-            min_load = load;
-            best_device = device_id;
-        }
-        spdlog::info("caculate device{}", device_static_info[device_id].ip_address);
-    }
-
-    spdlog::info("Selected device: {}", device_static_info[best_device].ip_address);
-    return device_static_info[best_device];
+    return selectDeviceByLoad(device_ids);
 }
 
 

@@ -64,14 +64,12 @@ TEST(DeviceTest, ParseAndRegisterNodes) {
     //getchar();
 }
 
-// test Docker_scheduler::Z3_schedule
 TEST(StatusTest, Status_Update) {
-    std::string test_file = "../../../tests/z3_mock_test/mock_data.json";
+    std::string test_file = "../../config_files/static_info.json";
     Docker_scheduler scheduler(test_file);
     int counter_atlas_h=0;
     int counter_atlas_l=0;
     int counter_rk3588=0;
-    // loop Z3_schedule 10 times
     for (int i = 0; i < 1000; ++i) {
         spdlog::info("Running Predict test iteration: {}", i + 1);
         Device target = Docker_scheduler::Model_predict(YoloV5);

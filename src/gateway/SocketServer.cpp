@@ -194,11 +194,11 @@ spdlog::error("parse params failed, firstLine:{}", first_line);
 
     // Step 2: Set up connection to target server
     // get target_device_id
-    TimeRecord<chrono::milliseconds> z3_time_record("z3_time_record");
-    z3_time_record.startRecord();
+    TimeRecord<chrono::milliseconds> schedule_time_record("schedule_time_record");
+    schedule_time_record.startRecord();
     optional<SrvInfo> srv_info_opt = Docker_scheduler::getOrCrtSrvByTType(task_type);
-    z3_time_record.endRecord();
-    spdlog::info("Docker_scheduler::getOrCrtSrvByTType cost_time:{}", z3_time_record.getDuration());
+    schedule_time_record.endRecord();
+    spdlog::info("Docker_scheduler::getOrCrtSrvByTType cost_time:{}", schedule_time_record.getDuration());
     if (srv_info_opt == nullopt) {
         spdlog::error("we can't get a useful srv,Original first line: {}",first_line);
         // sendErrorResponse(client_sock, SERVE_NOAVAILABLE_ERROR);

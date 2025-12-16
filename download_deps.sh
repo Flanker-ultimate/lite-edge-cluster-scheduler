@@ -77,17 +77,12 @@ download_and_extract \
     "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.zip" \
     "json-src"
 
-# 4. Z3 (z3-4.13.3)
-download_and_extract \
-    "https://github.com/Z3Prover/z3/archive/refs/tags/z3-4.13.3.zip" \
-    "z3-src"
-
-# 5. spdlog (v1.15.0)
+# 4. spdlog (v1.15.0)
 download_and_extract \
     "https://github.com/gabime/spdlog/archive/refs/tags/v1.15.0.zip" \
     "spdlog-src"
 
-# 6. Boost 子模块 (boost-1.86.0)
+# 5. Boost 子模块 (boost-1.86.0)
 download_and_extract \
     "https://github.com/boostorg/uuid/archive/refs/tags/boost-1.86.0.zip" \
     "boost-uuid-src"

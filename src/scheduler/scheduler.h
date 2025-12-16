@@ -13,14 +13,12 @@
 #include "device.h"
 #include <optional>
 #include "spdlog/spdlog.h"
-#include "z3++.h"
 #include "TimeRecorder.h"
 //#include <cpu_provider_factory.h>
 //#include <provider_options.h>
 //#include <onnxruntime_cxx_api.h>
 using namespace std;
 using json = nlohmann::json;
-using namespace z3;
 #pragma once
 
 struct StaticInfoItem {
@@ -66,8 +64,8 @@ private:
 
     int scheduling_trget; // current scheduling_target
 
-    static  z3::context c;
-    static std::mutex z3_mutex;  // 专门保护Z3 context
+    static Device selectDeviceByLoad(const std::vector<DeviceID>& devIds);
+
     //onnx
 //    static Ort::Env env;
 //    static Ort::Session* onnx_session;  // 使用指针避免初始化时构造
@@ -139,9 +137,7 @@ public:
     /// @brief Get target device ID for new coming task with type Ttype
     /// @param Ttype the type of target task 
     /// @return target device
-    static Device Z3_schedule(TaskType Ttype);
-    static Device Z3_schedule_v2(TaskType Ttype);
-    static Device Z3_simulate_schedule(TaskType Ttype,float prob1, float prob2, float prob3);
+    static Device Schedule(TaskType Ttype);
     static Device Model_predict(TaskType Ttype);
     static Device Pic_Schedule(TaskType Ttype);
     // 模型加载函数

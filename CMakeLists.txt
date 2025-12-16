@@ -56,16 +56,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(boost-uuid boost-assert boost-config boost-throw_exception boost-type_traits boost-static_assert)
 
 FetchContent_Declare(
-        z3
-        SOURCE_DIR "${DEPS_ROOT}/z3-src"
-)
-
-FetchContent_Declare(
         spdlog
         SOURCE_DIR "${DEPS_ROOT}/spdlog-src"
 )
 
-FetchContent_MakeAvailable(googletest httplib json z3 spdlog)
+FetchContent_MakeAvailable(googletest httplib json spdlog)
 
 
 if (WIN32)
@@ -80,12 +75,10 @@ add_subdirectory(src/docker_client)
 add_subdirectory(src/scheduler)
 add_subdirectory(src/docker_scheduler_agent)
 add_subdirectory(src/gateway)
-add_subdirectory(src/z3_test)
 target_compile_definitions(gateway PUBLIC ABSOLUTE_CONFIG_PATH="${ABSOLUTE_CONFIG_PATH}")
 enable_testing()
 include(GoogleTest)
 add_subdirectory(tests/docker_client)
 # add_subdirectory(tests/scheduler)
-add_subdirectory(tests/z3_mock_test)
 # add_subdirectory(tests/predict)
 # 构建gtest end
