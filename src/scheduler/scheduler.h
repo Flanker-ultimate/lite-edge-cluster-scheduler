@@ -30,12 +30,17 @@ enum class TaskStatus {
     RUNNING
 };
 
+enum class ScheduleStrategy {
+    LOAD_BASED,
+    ROUND_ROBIN
+};
+
 struct ImageTask {
     std::string task_id;   // unique identifier, prefer filename
     std::string file_path; // absolute path on master disk
     std::string client_ip; // source ip for slave to report
     TaskType task_type{TaskType::Unknown};
-    bool use_round_robin{false};
+    ScheduleStrategy schedule_strategy{ScheduleStrategy::LOAD_BASED};
     int retry_count{0};
     TaskStatus status{TaskStatus::PENDING};
 };

@@ -117,7 +117,7 @@ void Docker_scheduler::SchedulerLoop() {
 
         Device target_device;
         try {
-            target_device = task.use_round_robin ? RoundRobin_Schedule(task.task_type) : Schedule(task.task_type);
+            target_device = task.schedule_strategy == ScheduleStrategy::ROUND_ROBIN ? RoundRobin_Schedule(task.task_type) : Schedule(task.task_type);
         } catch (const std::exception &e) {
             spdlog::error("Schedule failed for task {}: {}", task.task_id, e.what());
             task.retry_count++;

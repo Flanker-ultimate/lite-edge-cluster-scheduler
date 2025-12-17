@@ -129,7 +129,11 @@ class ImageUploadService:
         }
 
     def _forward_picture_info(self, picture_info: Dict[str, str]) -> None:
-        scheduler_url = f"http://127.0.0.1:6666/{self.strategy}"
+        # 将旧的策略映射到新的策略参数
+        strategy_param = "load"  # 默认使用负载贪心策略
+        if self.strategy == "round_schedule":
+            strategy_param = "roundrobin"
+        scheduler_url = f"http://127.0.0.1:6666/schedule?stargety={strategy_param}"
         parsed = urlparse(scheduler_url)
         if parsed.scheme == "https":
             conn = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=5)

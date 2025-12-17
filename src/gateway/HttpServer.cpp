@@ -29,7 +29,6 @@ bool HttpServer::Start() {
     svr.Post("/hot_start", this->HandleHotStart);
     svr.Post(SCHEDULE_ROUTE, this->HandleSchedule);
     svr.Post(DISCONNECT_NODE_ROUTE, this->HandleDisconnect);
-    svr.Post(SCHEDULE_ROUND_ROUTE, this->HandleScheduleRound);
 
     spdlog::info("HttpServer started success，ip:{} port:{}",this->ip, this->port);
     auto result = svr.listen(this->ip, this->port);
@@ -216,6 +215,22 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
         TaskType tasktype = StrToTaskType(body_json["tasktype"].get<std::string>());
         std::string filename = body_json["filename"].get<std::string>();
 
+        // 解析调度策略参数
+        auto strategy_param = req.get_param_value("stargety");
+        ScheduleStrategy strategy = ScheduleStrategy::LOAD_BASED; // 默认使用负载贪心策略
+
+        if (!strategy_param.empty()) {
+            if (strategy_param == "roundrobin" || strategy_param == "round_robin") {
+                strategy = ScheduleStrategy::ROUND_ROBIN;
+            } else if (strategy_param == "load" || strategy_param == "负载贪心") {
+                strategy = ScheduleStrategy::LOAD_BASED;
+            } else {
+                res.status = 400;
+                res.set_content(R"({"status":"error","msg":"invalid stargety parameter"})", "application/json");
+                return;
+            }
+        }
+
         // 拼接图片文件路径
         fs::path fsfullpath = project_root / args.task_path / ip / filename;
         std::string fullpath = fsfullpath.string();
@@ -233,10 +248,11 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
         task.file_path = fullpath;
         task.client_ip = ip;
         task.task_type = tasktype;
-        task.use_round_robin = true;
+        task.schedule_strategy = strategy;
         Docker_scheduler::SubmitTask(task, false);
 
-        spdlog::info("task {} enqueued for scheduling", filename);
+        spdlog::info("task {} enqueued for {} scheduling", filename,
+                     strategy == ScheduleStrategy::ROUND_ROBIN ? "round-robin" : "load-based");
         res.status = 202;
         res.set_content(R"({"status":"queued","msg":"task enqueued"})", "application/json");
 
@@ -248,51 +264,6 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
     }
 }
 
-
-//新的调度接口
-void HttpServer::HandleScheduleRound(const httplib::Request &req, httplib::Response &res) {
-    namespace fs = std::filesystem;
-    fs::path currentPath = fs::current_path();
-    //std::cout << "Current path: " << currentPath << std::endl;
-    try {
-        auto body_json = nlohmann::json::parse(req.body);
-        // 检查必要字段：ip, filename, tasktype
-        if(!body_json.contains("ip")  || !body_json.contains("filename") || !body_json.contains("tasktype")) {
-            res.status = 400;
-            res.set_content(R"({"status":"error","msg":"missing required fields"})", "application/json");
-            return;
-        }
-        std::string ip = body_json["ip"].get<std::string>();
-        TaskType tasktype = StrToTaskType(body_json["tasktype"].get<std::string>());
-        std::string filename = body_json["filename"].get<std::string>();
-        std::string fullpath = args.task_path + "/" + ip + "/" + filename;
-
-        // 读取图片
-        std::ifstream ifs(fullpath, std::ios::binary);
-        if (!ifs) {
-            spdlog::error("无法读取图片文件: {}", fullpath);
-            res.status = 500;
-            res.set_content(R"({"status":"error","msg":"failed to open image file"})", "application/json");
-            return;
-        }
-        ImageTask task;
-        task.task_id = filename;
-        task.file_path = fullpath;
-        task.client_ip = ip;
-        task.task_type = tasktype;
-        Docker_scheduler::SubmitTask(task, false);
-
-        spdlog::info("task {} enqueued for round-robin scheduling", filename);
-        res.status = 202;
-        res.set_content(R"({"status":"queued","msg":"task enqueued"})", "application/json");
-
-
-    } catch (const std::exception &e) {
-        spdlog::error("解析失败: {}", e.what());
-        res.status = 400;
-        res.set_content(R"({"status":"error","msg":"invalid json"})", "application/json");
-    }
-}
 
 
 void HttpServer::HandleDisconnect(const httplib::Request &req, httplib::Response &res) {
