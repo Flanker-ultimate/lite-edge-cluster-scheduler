@@ -48,7 +48,7 @@ def load_existing_sequences(upload_root: str) -> Dict[str, int]:
 
 
 class ImageUploadService:
-    def __init__(self, upload_root: str, strategy: str = "schedule") -> None:
+    def __init__(self, upload_root: str, strategy: str = "load") -> None:
         self.upload_root = upload_root
         ensure_directory_exists(self.upload_root)
         self._ip_to_next_sequence = load_existing_sequences(self.upload_root)
@@ -129,11 +129,8 @@ class ImageUploadService:
         }
 
     def _forward_picture_info(self, picture_info: Dict[str, str]) -> None:
-        # 将旧的策略映射到新的策略参数
-        strategy_param = "load"  # 默认使用负载贪心策略
-        if self.strategy == "round_schedule":
-            strategy_param = "roundrobin"
-        scheduler_url = f"http://127.0.0.1:6666/schedule?stargety={strategy_param}"
+        # 直接使用策略参数，无需映射转换
+        scheduler_url = f"http://127.0.0.1:6666/schedule?stargety={self.strategy}"
         parsed = urlparse(scheduler_url)
         if parsed.scheme == "https":
             conn = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=5)
@@ -183,7 +180,7 @@ class ImageUploadService:
         return json.dumps({"saved_count": saved_count}).encode("utf-8")
 
 
-def serve(host: str = "0.0.0.0", port: int = 50051, strategy: str = "schedule", upload_path: str = None) -> None:
+def serve(host: str = "0.0.0.0", port: int = 50051, strategy: str = "load", upload_path: str = None) -> None:
     # 优先使用命令行传入的 upload_path，如果没有则使用默认值
     if upload_path is None:
         upload_root = DEFAULT_UPLOAD_ROOT
@@ -233,8 +230,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="gRPC ImageUpload server")
     parser.add_argument("-p", "--port", type=int, default=9999, help="gRPC listen port (default: 50051)")
-    parser.add_argument("-s", "--strategy", choices=["schedule", "round_schedule"], default="schedule",
-                        help="Forwarding endpoint to use when notifying scheduler (default: schedule)")
+    parser.add_argument("-s", "--strategy", choices=["load", "roundrobin"], default="load",
+                        help="Scheduling strategy: load=load-based priority, roundrobin=round-robin scheduling (default: load)")
     # 添加新的上传路径参数
     parser.add_argument("-u", "--upload_path", type=str, default=None,
                         help=f"Custom upload directory path (default: {DEFAULT_UPLOAD_ROOT})")

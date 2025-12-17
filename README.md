@@ -1,58 +1,194 @@
-# lite edge cluster scheduler
+# 边缘集群调度系统 (Edge Cluster Scheduler)
 
-## TODO
-动态地址初始化 master ip 以参数在编译中传入  
-统一模型输入/输出路径  
-检查模型推理内存泄漏问题  
+一个轻量级的边缘集群调度系统，支持在多个异构设备(Atlas、RK3588、Orin等)间智能分配AI推理任务。
 
+## 🌟 特性
 
-## 配置\&构建
+- **多设备异构支持**: 支持 Atlas 310、RK3588、Orin 等多种边缘计算设备
+- **智能调度算法**:
+  - 负载贪心算法：基于设备CPU、内存、XPU使用率和网络带宽的加权评分
+  - 轮询调度：简单公平的轮询分配策略
+- **故障恢复**: 任务失败自动重试，支持重试队列机制
+- **心跳检测**: 设备健康状态自动监控
+- **动态扩容**: 支持设备动态接入和退出
 
-### 配置
-for Atlas 310
-```sh
+## 🏗️ 系统架构
+
+### 组件说明
+
+1. **master-task_manager** [端口9999]
+   - gRPC服务器，接收来自客户端的任务请求
+   - 管理任务创建和分发
+   - 支持轮询和负载贪心两种调度策略供选择
+
+2. **master-gateway** [端口6666]
+   - HTTP API网关
+   - 路由：`/schedule`（支持策略参数：`?stargety=load`|[负载贪心]<br>`?stargety=roundrobin`）[轮询]
+   - 支持动态任务调度
+
+3. **slave-agent** [连接master:6666]
+   - 设备代理程序，定期上报设备状态
+   - 支持网络带宽波动模拟
+
+4. **slave-recv_server** [端口20810]
+   - 任务接收服务器
+   - 处理来自master的任务分发
+
+5. **slave-rst_sender**
+   - 结果发送器
+   - 定期扫描输出目录并发送结果
+
+## 🚀 快速开始
+
+### 🔧 构建与配置
+
+#### 环境要求
+- C++ 17
+- Python 3.7+
+- CMake 3.14+
+
+#### 设备类型配置
+
+```bash
+# 针对 Atlas 310
 cmake -S . -B build -DAGENT_DEVICE_TYPE=ATLAS_I
+
+# 针对 RK3588
+cmake -S . -B build -DAGENT_DEVICE_TYPE=RK3588
+
+# 针对 Orin
+cmake -S . -B build -DAGENT_DEVICE_TYPE=ORIN
 ```
 
-### 构建
-编译源代码(4线程)
-```sh
+#### 编译
+```bash
 cmake --build build -j 8
 ```
 
-## TOTOAL WORKFLOW
-1.master-task_manager
-python3 ./src/modules/master/task_manager.py --port 9999 --strategy schedule --upload_path=workspace/master/data/upload
+## 📋 使用说明
 
-listen 9999
-请求master-gateway路由http://127.0.0.1:6666/{self.strategy}
-2.master-gateway
- ./build/src/gateway/gateway --config ./config_files --task workspace/master/data/upload
+### 1️⃣ 启动任务管理器（Task Manager）
+```bash
+# 使用推荐的直观参数
+python3 ./src/modules/master/task_manager.py \
+    --port 9999 \
+    --strategy load \
+    --upload_path=workspace/master/data/upload
 
---task upload pic path
+# 或者使用轮询策略
+python3 ./src/modules/master/task_manager.py \
+    --port 9999 \
+    --strategy roundrobin \
+    --upload_path=workspace/master/data/upload
+```
+**参数说明：**
+- `-p/--port`: gRPC监听端口（默认：9999）
+- `-s/--strategy`: 调度策略（直接对应网关查询参数）
+  - `load`: 负载贪心策略（对应 `?stargety=load`） - 基于设备负载的智能调度
+  - `roundrobin`: 轮询策略（对应 `?stargety=roundrobin`） - 公平的轮询分配
+- `-u/--upload_path`: 图片上传目录
 
-6666 port register_node .et details of urls in HttpServer.h
-7777 port sockerServer is dropped now,it's deal task quest specificly
+### 2️⃣ 启动调度网关（Gateway）
+```bash
+./build/src/gateway/gateway \
+    --config ./config_files \
+    --task workspace/master/data/upload
+```
 
-3.slave-agent
-./build/src/docker_scheduler_agent/docker_scheduler_agent --master-ip 127.0.0.1 --master-port 6666  --disconnect 100000 --reconnect 20  --bandwidth-fluctuate
+**HTTP API:**  `http://127.0.0.1:6666`
 
-bandwidth-fluctuate exist means ture,net fluctuate  ,otherwise it doesn't exist means steay
+### 3️⃣ 启动设备代理（Agent）
+```bash
+./build/src/docker_scheduler_agent/docker_scheduler_agent \
+    --master-ip 127.0.0.1 \
+    --master-port 6666 \
+    --disconnect 100000 \
+    --reconnect 20 \
+    --bandwidth-fluctuate
+```
+**参数说明：**
+- `--bandwidth-fluctuate`: 启用网络带宽波动模拟
+- `--disconnect`: 断开重连间隔（秒）
+- `--reconnect`: 重试间隔（秒）
 
-4.slave-recv_server
+### 4️⃣ 启动接收服务器（Receive Server）
+```bash
 python3 src/modules/slave/recv_server.py
-5.slave-rst_sender
-python3 ./src/modules/slave/rst_send.py --input-dir workspace/slave/data/output/label --interval 10
+```
 
-input-dir= yolo output path
-interval= scan output dir’s interval
-6.task_producer-rst_recv
-python3 ./src/modules/client/rst_recv.py --port 8888 --dir workspace/client/data/rst
-7.task_producer-pic_send
+### 5️⃣ 启动结果发送器（Result Sender）
+```bash
+python3 ./src/modules/slave/rst_send.py \
+    --input-dir workspace/slave/data/output/label \
+    --interval 10
+```
 
-python3 ./src/modules/client/send_pic.py --host=127.0.0.1 --port=9999 --dir=workspace/client/data/req --max=200 --workers=8
+### 6️⃣ 启动客户端接收器（Client Receiver）
+```bash
+python3 ./src/modules/client/rst_recv.py \
+    --port 8888 \
+    --dir workspace/client/data/rst
+```
 
--max pics'count
--workers send threads'count
--host ip of master-task_manager's host 
---port master:task_manager listen port
+### 7️⃣ 启动任务发送器（Task Sender）
+```bash
+python3 ./src/modules/client/send_pic.py \
+    --host=127.0.0.1 \
+    --port=9999 \
+    --dir=workspace/client/data/req \
+    --max=200 \
+    --workers=8
+```
+
+## ⚙️ 调度策略配置
+
+系统支持两种调度策略，参数直接对应网关查询参数：
+
+| Task Manager参数 | 网关查询参数 | 策略说明 |
+|-----------------|--------------|----------|
+| `load` | `?stargety=load` | **负载贪心（默认）** - 基于设备负载的智能调度，考虑CPU、内存、XPU使用率和网络带宽 |
+| `roundrobin` | `?stargety=roundrobin` | **轮询调度** - 公平的轮询分配，适用于负载均衡场景 |
+
+**注意事项**：
+- 网关默认使用负载贪心策略（不指定参数时）
+
+## 📁 项目结构
+
+```
+lite-edge-cluster-scheduler/
+├── src/
+│   ├── gateway/          # 调度网关（HTTP API）
+│   ├── modules/
+│   │   ├── master/      # 主控模块（Task Manager）
+│   │   ├── slave/       # 从设备模块
+│   │   └── client/      # 客户端模块
+│   └── scheduler/       # 调度器核心
+├── build/               # 构建输出目录
+├── config_files/        # 配置文件
+└── workspace/           # 工作区目录
+    ├── master/
+    ├── slave/
+    └── client/
+```
+
+## 🔍 监控与调试
+
+- **设备状态**：通过网关API可实时查看设备状态
+- **任务日志**：各组件均输出详细日志信息
+- **性能监控**：支持任务执行时间统计
+
+## 📝 TODO
+
+- [ ] 动态地址初始化：支持master IP作为编译参数传入
+- [ ] 统一模型输入/输出路径
+- [ ] 检查模型推理内存泄漏问题
+- [ ] 支持更多设备类型
+- [ ] 优化网络通信协议
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request 来帮助改进项目！
+
+## 📄 许可证
+
+[请在此处添加许可证信息]
