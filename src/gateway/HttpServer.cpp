@@ -227,42 +227,18 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
             res.set_content(R"({"status":"error","msg":"failed to open image file"})", "application/json");
             return;
         }
-        std::ostringstream buffer;
-        buffer << ifs.rdbuf();
-        std::string image_data = buffer.str();
 
-        // 调度程序选择最佳设备
-        Device device = Docker_scheduler::Pic_Schedule(tasktype);
-        std::string target_ip = device.ip_address;
-        int target_port = 20810;
+        ImageTask task;
+        task.task_id = filename;
+        task.file_path = fullpath;
+        task.client_ip = ip;
+        task.task_type = tasktype;
+        task.use_round_robin = true;
+        Docker_scheduler::SubmitTask(task, false);
 
-        // 准备 JSON 元信息
-        nlohmann::json meta_json;
-        meta_json["ip"] = ip;
-        meta_json["file_name"] = filename;
-        meta_json["tasktype"] = body_json["tasktype"].get<std::string>();
-        std::string meta_str = meta_json.dump();
-
-        // 发送请求
-        httplib::Client cli(target_ip, target_port);
-        // multipart 表单
-        httplib::MultipartFormDataItems form_items = {
-                {"pic_file", image_data, filename, "image/png"},
-                {"pic_info", meta_str, "", "application/json"}
-        };
-        auto res_send = cli.Post("/recv_task", form_items);
-        spdlog::info("请求发送");
-
-        spdlog::info("Gateway time:{}",time_record_schedule.getDuration());
-        if (res_send && res_send->status == 200) {
-            spdlog::info("已成功将图片发送到 {}", target_ip);
-            res.status = 200;
-            res.set_content(R"({"status":"send success"})", "application/json");
-        } else {
-            spdlog::error("发送图片失败");
-            res.status = 500;
-            res.set_content(R"({"status":"error","msg":"send to device failed"})", "application/json");
-        }
+        spdlog::info("task {} enqueued for scheduling", filename);
+        res.status = 202;
+        res.set_content(R"({"status":"queued","msg":"task enqueued"})", "application/json");
 
 
     } catch (const std::exception &e) {
@@ -291,12 +267,6 @@ void HttpServer::HandleScheduleRound(const httplib::Request &req, httplib::Respo
         std::string filename = body_json["filename"].get<std::string>();
         std::string fullpath = args.task_path + "/" + ip + "/" + filename;
 
-        // 调度程序选择最佳设备
-        Device device = Docker_scheduler::RoundRobin_Schedule(tasktype);
-        std::string target_ip = device.ip_address;
-//        int target_port = device.agent_port;
-//        std::string target_ip="172.28.16.1";
-        int target_port = 20810;
         // 读取图片
         std::ifstream ifs(fullpath, std::ios::binary);
         if (!ifs) {
@@ -305,36 +275,16 @@ void HttpServer::HandleScheduleRound(const httplib::Request &req, httplib::Respo
             res.set_content(R"({"status":"error","msg":"failed to open image file"})", "application/json");
             return;
         }
-        std::ostringstream buffer;
-        buffer << ifs.rdbuf();
-        std::string image_data = buffer.str();
+        ImageTask task;
+        task.task_id = filename;
+        task.file_path = fullpath;
+        task.client_ip = ip;
+        task.task_type = tasktype;
+        Docker_scheduler::SubmitTask(task, false);
 
-
-        // 准备 JSON 元信息
-        nlohmann::json meta_json;
-        meta_json["ip"] = ip;
-        meta_json["file_name"] = filename;
-        meta_json["tasktype"] = body_json["tasktype"].get<std::string>();
-        std::string meta_str = meta_json.dump();
-
-        //发送请求
-        httplib::Client cli(target_ip, target_port);
-        // multipart 表单
-        httplib::MultipartFormDataItems form_items = {
-                {"pic_file", image_data, filename, "image/png"},
-                {"pic_info", meta_str, "", "application/json"}
-        };
-        auto res_send = cli.Post("/recv_task", form_items);
-
-        if (res_send && res_send->status == 200) {
-            spdlog::info("已成功将图片发送到 {}", target_ip);
-            res.status = 200;
-            res.set_content(R"({"status":"send success"})", "application/json");
-        } else {
-            spdlog::error("发送图片失败");
-            res.status = 500;
-            res.set_content(R"({"status":"error","msg":"send to device failed"})", "application/json");
-        }
+        spdlog::info("task {} enqueued for round-robin scheduling", filename);
+        res.status = 202;
+        res.set_content(R"({"status":"queued","msg":"task enqueued"})", "application/json");
 
 
     } catch (const std::exception &e) {

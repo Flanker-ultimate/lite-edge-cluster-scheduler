@@ -7,7 +7,9 @@
 #include <DockerClient.h>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
 std::map<TaskType, std::map<DeviceType, StaticInfoItem> > Docker_scheduler::static_info; // static task info
+TaskQueueManager Docker_scheduler::task_queue_manager_;
 
 std::shared_mutex Docker_scheduler::devs_mutex; //
 std::map<DeviceID, Device> Docker_scheduler::device_static_info; // static device info
@@ -16,11 +18,169 @@ std::map<DeviceID, DeviceStatus> Docker_scheduler::device_status; // dynamic dev
 
 // std::shared_mutex Docker_scheduler::td_map_mutex_; // Thread-safe mutex for TDMap
 std::map<TaskType, std::map<DeviceID, DevSrvInfos> > Docker_scheduler::tdMap;
+std::once_flag Docker_scheduler::scheduler_loop_once_flag_;
 // onnx
 //Ort::Env Docker_scheduler::env(ORT_LOGGING_LEVEL_WARNING, "OnnxModel");
 //Ort::Session* Docker_scheduler::onnx_session = nullptr;
 bool Docker_scheduler::is_model_loaded = false;
 size_t Docker_scheduler::rr_index = 0;
+std::optional<ImageTask> TaskQueueManager::PopPending() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    pending_cv_.wait(lock, [this]() { return !pending_queue_.empty(); });
+    ImageTask task = pending_queue_.front();
+    pending_queue_.pop_front();
+    return task;
+}
+
+void TaskQueueManager::PushPending(const ImageTask &task, bool high_priority) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (high_priority) {
+            pending_queue_.push_front(task);
+        } else {
+            pending_queue_.push_back(task);
+        }
+    }
+    pending_cv_.notify_one();
+}
+
+bool TaskQueueManager::AddRunningTask(const DeviceID &device_id, const ImageTask &task) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ImageTask running_task = task;
+    running_task.status = TaskStatus::RUNNING;
+    running_index_[device_id].push_back(running_task);
+    return true;
+}
+
+bool TaskQueueManager::CompleteTask(const std::string &task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto &entry : running_index_) {
+        auto &task_list = entry.second;
+        for (auto it = task_list.begin(); it != task_list.end(); ++it) {
+            if (it->task_id == task_id) {
+                task_list.erase(it);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void TaskQueueManager::RecoverTasks(const DeviceID &device_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = running_index_.find(device_id);
+    if (it == running_index_.end()) {
+        return;
+    }
+    auto &tasks = it->second;
+    for (auto &task : tasks) {
+        task.retry_count += 1;
+        task.status = TaskStatus::PENDING;
+        if (task.retry_count <= 3) {
+            pending_queue_.push_front(task);
+        } else {
+            failed_history_.push_back(task);
+        }
+    }
+    running_index_.erase(it);
+    pending_cv_.notify_one();
+}
+
+void TaskQueueManager::MoveToFailed(const ImageTask &task) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    failed_history_.push_back(task);
+}
+
+void Docker_scheduler::StartSchedulerLoop() {
+    std::call_once(scheduler_loop_once_flag_, []() {
+        std::thread(&Docker_scheduler::SchedulerLoop).detach();
+    });
+}
+
+void Docker_scheduler::SubmitTask(const ImageTask &task, bool high_priority) {
+    task_queue_manager_.PushPending(task, high_priority);
+    StartSchedulerLoop();
+}
+
+bool Docker_scheduler::CompleteTask(const std::string &task_id) {
+    return task_queue_manager_.CompleteTask(task_id);
+}
+
+void Docker_scheduler::SchedulerLoop() {
+    const int max_retries = 3;
+    while (true) {
+        auto task_opt = task_queue_manager_.PopPending();
+        if (!task_opt.has_value()) {
+            continue;
+        }
+        ImageTask task = *task_opt;
+
+        Device target_device;
+        try {
+            target_device = task.use_round_robin ? RoundRobin_Schedule(task.task_type) : Schedule(task.task_type);
+        } catch (const std::exception &e) {
+            spdlog::error("Schedule failed for task {}: {}", task.task_id, e.what());
+            task.retry_count++;
+            if (task.retry_count <= max_retries) {
+                task_queue_manager_.PushPending(task, true);
+            } else {
+                task_queue_manager_.MoveToFailed(task);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        std::ifstream ifs(task.file_path, std::ios::binary);
+        if (!ifs) {
+            spdlog::error("Failed to open task file: {}", task.file_path);
+            task.retry_count++;
+            if (task.retry_count <= max_retries) {
+                task_queue_manager_.PushPending(task, true);
+            } else {
+                task_queue_manager_.MoveToFailed(task);
+            }
+            continue;
+        }
+        std::ostringstream buffer;
+        buffer << ifs.rdbuf();
+        std::string image_data = buffer.str();
+
+        nlohmann::json meta_json;
+        meta_json["ip"] = task.client_ip;
+        meta_json["file_name"] = task.task_id;
+        meta_json["tasktype"] = task.task_type == TaskType::Unknown ? "Unknown" : to_string(nlohmann::json(task.task_type));
+        std::string meta_str = meta_json.dump();
+
+        try {
+            httplib::Client cli(target_device.ip_address, 20810);
+            httplib::MultipartFormDataItems form_items = {
+                {"pic_file", image_data, task.task_id, "application/octet-stream"},
+                {"pic_info", meta_str, "", "application/json"}
+            };
+            auto res = cli.Post("/recv_task", form_items);
+            if (res && res->status == 200) {
+                task_queue_manager_.AddRunningTask(target_device.global_id, task);
+                spdlog::info("Task {} dispatched to device {}", task.task_id, target_device.ip_address);
+            } else {
+                spdlog::warn("Send task {} failed, status={}", task.task_id, res ? res->status : -1);
+                task.retry_count++;
+                if (task.retry_count <= max_retries) {
+                    task_queue_manager_.PushPending(task, true);
+                } else {
+                    task_queue_manager_.MoveToFailed(task);
+                }
+            }
+        } catch (const std::exception &e) {
+            spdlog::error("Exception sending task {}: {}", task.task_id, e.what());
+            task.retry_count++;
+            if (task.retry_count <= max_retries) {
+                task_queue_manager_.PushPending(task, true);
+            } else {
+                task_queue_manager_.MoveToFailed(task);
+            }
+        }
+    }
+}
 
 Docker_scheduler::Docker_scheduler() {
 }
@@ -128,6 +288,7 @@ void Docker_scheduler::display_dev() {
 
 void Docker_scheduler::init(string filepath) {
     loadStaticInfo(filepath);
+    StartSchedulerLoop();
 }
 
 ImageInfo Docker_scheduler::getImage(TaskType taskType, DeviceType devType) {
@@ -681,16 +842,22 @@ bool Docker_scheduler::Disconnect_device(Device device) {
     // 从 device_status 中删除对应设备
     // 假设 device.global_id 是唯一标识
     try {
+        bool removed = false;
         // 查找设备
         std::unique_lock<std::shared_mutex> lock(devs_mutex);
         auto it = device_status.find(device.global_id);
         if (it != device_status.end()) {
             device_status.erase(it);
-            spdlog::info("Device {} disconnected and removed.", boost::uuids::to_string(device.global_id));
-            return true;
+            removed = true;
         } else {
             spdlog::warn("Device {} not found in device_status.", boost::uuids::to_string(device.global_id));
             return false;
+        }
+        lock.unlock();
+        if (removed) {
+            task_queue_manager_.RecoverTasks(device.global_id);
+            spdlog::info("Device {} disconnected and removed.", boost::uuids::to_string(device.global_id));
+            return true;
         }
     } catch (const std::exception &e) {
         spdlog::error("Disconnect_device exception: {}", e.what());

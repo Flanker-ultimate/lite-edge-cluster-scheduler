@@ -6,10 +6,14 @@
 #include <vector>
 #include <list>
 #include <queue>
+#include <deque>
+#include <unordered_map>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <mutex>
 #include <shared_mutex>
+#include <condition_variable>
+#include <boost/uuid/uuid_hash.hpp>
 #include "device.h"
 #include <optional>
 #include "spdlog/spdlog.h"
@@ -20,6 +24,21 @@
 using namespace std;
 using json = nlohmann::json;
 #pragma once
+
+enum class TaskStatus {
+    PENDING,
+    RUNNING
+};
+
+struct ImageTask {
+    std::string task_id;   // unique identifier, prefer filename
+    std::string file_path; // absolute path on master disk
+    std::string client_ip; // source ip for slave to report
+    TaskType task_type{TaskType::Unknown};
+    bool use_round_robin{false};
+    int retry_count{0};
+    TaskStatus status{TaskStatus::PENDING};
+};
 
 struct StaticInfoItem {
     ImageInfo imageInfo;
@@ -47,6 +66,22 @@ struct StaticInfoItem {
 };
 
 
+class TaskQueueManager {
+public:
+    void PushPending(const ImageTask &task, bool high_priority);
+    std::optional<ImageTask> PopPending();
+    void RecoverTasks(const DeviceID &device_id);
+    bool AddRunningTask(const DeviceID &device_id, const ImageTask &task);
+    bool CompleteTask(const std::string &task_id);
+    void MoveToFailed(const ImageTask &task);
+
+private:
+    std::deque<ImageTask> pending_queue_;
+    std::unordered_map<DeviceID, std::list<ImageTask>> running_index_;
+    std::list<ImageTask> failed_history_;
+    std::mutex mutex_;
+    std::condition_variable pending_cv_;
+};
 
 class Docker_scheduler {
 private:
@@ -63,6 +98,8 @@ private:
     //  dynamic device info unorder_map becaues of uuid_t cant compare for the need of map
 
     int scheduling_trget; // current scheduling_target
+    static TaskQueueManager task_queue_manager_;
+    static std::once_flag scheduler_loop_once_flag_;
 
     static Device selectDeviceByLoad(const std::vector<DeviceID>& devIds);
 
@@ -148,6 +185,10 @@ public:
     static Device RoundRobin_Schedule(TaskType Ttype);
 
     static bool Disconnect_device(Device device);
+    static void StartSchedulerLoop();
+    static void SchedulerLoop();
+    static void SubmitTask(const ImageTask &task, bool high_priority = false);
+    static bool CompleteTask(const std::string &task_id);
     void display_devstatus(DeviceID dev_id){
         DeviceStatus status = device_status[dev_id];
         status.show();
@@ -163,6 +204,8 @@ public:
             tdMap[ttype][id].dev_srv_info_status = Running;
         }
     }
+
+    static TaskQueueManager& GetTaskQueueManager() { return task_queue_manager_; }
 
 
 };

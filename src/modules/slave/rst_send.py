@@ -18,6 +18,7 @@ python3 rst_send.py -i /path/to/dir -t 3
 
 import argparse
 import http.client
+import json
 import os
 import time
 from urllib.parse import urlparse
@@ -34,7 +35,7 @@ DEFAULT_INPUT_DIR = os.path.join(DATA_DIR, "inference_results", "label")
 
 
 class StrictIPSender:
-    def __init__(self, input_dir: str, interval: int = 5):
+    def __init__(self, input_dir: str, interval: int = 5, master_report_url: str = None):
         """
         Args:
             input_dir: 必须存在的input目录路径
@@ -42,6 +43,9 @@ class StrictIPSender:
         """
         self.input_dir = os.path.abspath(input_dir)
         self.interval = interval
+        self.master_report_url = master_report_url or os.environ.get(
+            "MASTER_REPORT_URL", "http://127.0.0.1:7000/task/report"
+        )
 
         # 验证目录是否存在
         if not os.path.exists(self.input_dir):
@@ -107,6 +111,7 @@ class StrictIPSender:
         for filename, file_path in files_to_send:
             if self._send_single_file(file_path, ip):
                 success_count += 1
+                self._report_task_completion(filename)
                 try:
                     os.remove(file_path)
                     print(f"🗑️  已删除: {filename}")
@@ -157,6 +162,26 @@ class StrictIPSender:
             print(f"⚠️  发送到 {ip} 出错: {e}")
             return False
 
+    def _report_task_completion(self, filename: str) -> None:
+        """向 Master 汇报任务完成"""
+        if not self.master_report_url:
+            return
+        try:
+            parsed = urlparse(self.master_report_url)
+            conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+            conn = conn_cls(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=5)
+            path = parsed.path or "/task/report"
+            body = json.dumps({"filename": filename}).encode("utf-8")
+            headers = {"Content-Type": "application/json", "Content-Length": str(len(body))}
+            conn.request("POST", path, body=body, headers=headers)
+            resp = conn.getresponse()
+            resp.read()
+            if resp.status != 200:
+                print(f"⚠️  汇报任务 {filename} 失败，状态码 {resp.status}")
+            conn.close()
+        except Exception as exc:
+            print(f"⚠️  汇报任务 {filename} 到 Master 失败: {exc}")
+
     def process_next_ip(self):
         """处理下一个最旧的IP目录（只处理有文件的目录）"""
         ip_dirs = self.get_ip_dirs_sorted()
@@ -196,6 +221,12 @@ def parse_args():
     parser.add_argument(
         "--interval", "-t", type=int, default=5, help="检查间隔时间(秒) (默认: 5)"
     )
+    parser.add_argument(
+        "--master-report-url",
+        "-m",
+        default=os.environ.get("MASTER_REPORT_URL", "http://127.0.0.1:7000/task/report"),
+        help="Master 回调地址 (默认: 环境变量 MASTER_REPORT_URL 或 http://127.0.0.1:7000/task/report)",
+    )
     return parser.parse_args()
 
 
@@ -203,7 +234,9 @@ if __name__ == "__main__":
     args = parse_args()
 
     try:
-        sender = StrictIPSender(input_dir=args.input_dir, interval=args.interval)
+        sender = StrictIPSender(
+            input_dir=args.input_dir, interval=args.interval, master_report_url=args.master_report_url
+        )
         sender.run()
     except (FileNotFoundError, NotADirectoryError) as e:
         print(f"❌ 初始化失败: {e}")
