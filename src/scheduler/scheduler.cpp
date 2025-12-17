@@ -563,6 +563,7 @@ Device Docker_scheduler::selectDeviceByLoad(const std::vector<DeviceID>& devIds)
     if (devIds.empty()) {
         throw std::runtime_error("No candidate devices available for scheduling.");
     }
+    std::shared_lock<std::shared_mutex> lock(devs_mutex);
 
     const double w_cpu = 0.3;
     const double w_mem = 0.1;
@@ -573,9 +574,10 @@ Device Docker_scheduler::selectDeviceByLoad(const std::vector<DeviceID>& devIds)
     DeviceID best_device{};
     double min_load = std::numeric_limits<double>::max();
     bool found = false;
+    std::ostringstream device_logs_stream;
+    bool first_log_item = true;
 
     for (const auto& device_id : devIds) {
-        std::shared_lock<std::shared_mutex> lock(devs_mutex);
         auto it = device_status.find(device_id);
         auto dev_it = device_static_info.find(device_id);
         if (it == device_status.end() || dev_it == device_static_info.end()) {
@@ -593,12 +595,18 @@ Device Docker_scheduler::selectDeviceByLoad(const std::vector<DeviceID>& devIds)
                       w_bandwidth * bandwidth_val +
                       w_net_latency * net_latency_val;
 
+        if (!first_log_item) {
+            device_logs_stream << " | ";
+        }
+        device_logs_stream << fmt::format("device {}: cpu_used={}, mem_used={}, xpu_used={}, bandwidth={}, latency={}, weighted_score={}",
+                                          dev_it->second.ip_address, cpu_val, mem_val, xpu_val, bandwidth_val, net_latency_val, load);
+        first_log_item = false;
+
         if (load < min_load) {
             min_load = load;
             best_device = device_id;
             found = true;
         }
-        spdlog::info("calculate device {}", dev_it->second.ip_address);
     }
 
     if (!found) {
@@ -606,7 +614,8 @@ Device Docker_scheduler::selectDeviceByLoad(const std::vector<DeviceID>& devIds)
     }
 
     const auto selected = device_static_info.at(best_device);
-    spdlog::info("Selected device: {}", selected.ip_address);
+    spdlog::info("Schedule metrics summary: [{}]; Selected device: {} with weighted_score={}",
+                 device_logs_stream.str(), selected.ip_address, min_load);
     return selected;
 }
 
