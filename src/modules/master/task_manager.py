@@ -179,8 +179,13 @@ class ImageUploadService:
         return json.dumps({"saved_count": saved_count}).encode("utf-8")
 
 
-def serve(host: str = "0.0.0.0", port: int = 50051, strategy: str = "schedule") -> None:
-    upload_root = DEFAULT_UPLOAD_ROOT
+def serve(host: str = "0.0.0.0", port: int = 50051, strategy: str = "schedule", upload_path: str = None) -> None:
+    # 优先使用命令行传入的 upload_path，如果没有则使用默认值
+    if upload_path is None:
+        upload_root = DEFAULT_UPLOAD_ROOT
+    else:
+        upload_root = upload_path
+    
     service = ImageUploadService(upload_root=upload_root, strategy=strategy)
 
     server = grpc.server(
@@ -226,7 +231,9 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--port", type=int, default=9999, help="gRPC listen port (default: 50051)")
     parser.add_argument("-s", "--strategy", choices=["schedule", "round_schedule"], default="schedule",
                         help="Forwarding endpoint to use when notifying scheduler (default: schedule)")
+    # 添加新的上传路径参数
+    parser.add_argument("-u", "--upload_path", type=str, default=None,
+                        help=f"Custom upload directory path (default: {DEFAULT_UPLOAD_ROOT})")
     args = parser.parse_args()
-    serve(port=args.port, strategy=args.strategy)
-
-
+    
+    serve(port=args.port, strategy=args.strategy, upload_path=args.upload_path)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # by [jackhanyuan](https://github.com/jackhanyuan) 07/03/2022
-# import faulthandler 
+# import faulthandler
 # faulthandler.enable()
 import argparse
 import glob
@@ -9,13 +9,13 @@ import os
 import re
 import sys
 import time
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
-import cv2
 import acl
-import torch
+import cv2
 import numpy as np
+import torch
 from PIL import Image
 from torchvision.ops import nms
 
@@ -26,20 +26,23 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from acl_net import Net
-from constant import ACL_MEM_MALLOC_HUGE_FIRST, \
-    ACL_MEMCPY_HOST_TO_DEVICE, ACL_MEMCPY_DEVICE_TO_HOST, \
-    ACL_ERROR_NONE, IMG_EXT
+from constant import (
+    ACL_ERROR_NONE,
+    ACL_MEM_MALLOC_HUGE_FIRST,
+    ACL_MEMCPY_DEVICE_TO_HOST,
+    ACL_MEMCPY_HOST_TO_DEVICE,
+    IMG_EXT,
+)
 
 buffer_method = {
     "in": acl.mdl.get_input_size_by_index,
-    "out": acl.mdl.get_output_size_by_index
+    "out": acl.mdl.get_output_size_by_index,
 }
 
 
 def check_ret(message, ret):
     if ret != ACL_ERROR_NONE:
-        raise Exception("{} failed ret={}"
-                        .format(message, ret))
+        raise Exception("{} failed ret={}".format(message, ret))
 
 
 def xywh2xyxy(x):
@@ -73,12 +76,29 @@ def box_iou(box1, box2):
     area2 = box_area(box2.T)
 
     # inter(N,M) = (rb(N,M,2) - lt(N,M,2)).clamp(0).prod(2)
-    inter = (torch.min(box1[:, None, 2:], box2[:, 2:]) - torch.max(box1[:, None, :2], box2[:, :2])).clamp(0).prod(2)
-    return inter / (area1[:, None] + area2 - inter)  # iou = inter / (area1 + area2 - inter)
+    inter = (
+        (
+            torch.min(box1[:, None, 2:], box2[:, 2:])
+            - torch.max(box1[:, None, :2], box2[:, :2])
+        )
+        .clamp(0)
+        .prod(2)
+    )
+    return inter / (
+        area1[:, None] + area2 - inter
+    )  # iou = inter / (area1 + area2 - inter)
 
 
-def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, multi_label=False,
-                        labels=(), max_det=300):
+def non_max_suppression(
+    prediction,
+    conf_thres=0.25,
+    iou_thres=0.45,
+    classes=None,
+    agnostic=False,
+    multi_label=False,
+    labels=(),
+    max_det=300,
+):
     """Runs Non-Maximum Suppression (NMS) on inference results
 
     Returns:
@@ -89,8 +109,12 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
     xc = prediction[..., 4] > conf_thres  # candidates
 
     # Checks
-    assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
-    assert 0 <= iou_thres <= 1, f'Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0'
+    assert 0 <= conf_thres <= 1, (
+        f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
+    )
+    assert 0 <= iou_thres <= 1, (
+        f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
+    )
 
     # Settings
     min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
@@ -155,17 +179,19 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
         i = nms(boxes, scores, iou_thres)  # NMS
         if i.shape[0] > max_det:  # limit detections
             i = i[:max_det]
-        if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
+        if merge and (1 < n < 3e3):  # Merge NMS (boxes merged using weighted mean)
             # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
             iou = box_iou(boxes[i], boxes) > iou_thres  # iou matrix
             weights = iou * scores[None]  # box weights
-            x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
+            x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(
+                1, keepdim=True
+            )  # merged boxes
             if redundant:
                 i = i[iou.sum(1) > 1]  # require redundancy
 
         output[xi] = x[i]
         if (time.time() - t) > time_limit:
-            print(f'WARNING: NMS time limit {time_limit}s exceeded')
+            print(f"WARNING: NMS time limit {time_limit}s exceeded")
             break  # time limit exceeded
 
     return output
@@ -182,8 +208,13 @@ def clip_coords(boxes, img_shape):
 def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     # Rescale coords (xyxy) from img1_shape to img0_shape
     if ratio_pad is None:  # calculate from img0_shape
-        gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain  = old / new
-        pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
+        gain = min(
+            img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1]
+        )  # gain  = old / new
+        pad = (
+            (img1_shape[1] - img0_shape[1] * gain) / 2,
+            (img1_shape[0] - img0_shape[0] * gain) / 2,
+        )  # wh padding
     else:
         gain = ratio_pad[0][0]
         pad = ratio_pad[1]
@@ -205,7 +236,9 @@ def resize_img(input_img, target_size, padding=True):
         pad_h = target_size[0] - new_size[0]
         top, bottom = pad_h // 2, pad_h - (pad_h // 2)
         left, right = pad_w // 2, pad_w - (pad_w // 2)
-        resized_img = cv2.copyMakeBorder(img_new, top, bottom, left, right, cv2.BORDER_CONSTANT, None, (0, 0, 0))
+        resized_img = cv2.copyMakeBorder(
+            img_new, top, bottom, left, right, cv2.BORDER_CONSTANT, None, (0, 0, 0)
+        )
     else:
         resized_img = cv2.resize(input_img, (target_size[1], target_size[0]))
     return resized_img
@@ -213,15 +246,23 @@ def resize_img(input_img, target_size, padding=True):
 
 def load_label(label_name):
     label_lookup_path = label_name
-    with open(label_lookup_path, 'r') as f:
+    with open(label_lookup_path, "r") as f:
         label_contents = f.readlines()
 
     labels = np.array(list(map(lambda x: x.strip(), label_contents)))
     return labels
 
 
-def preprocess(img_data, input_shape=(320, 320), image_format='BGR', channel_first=False, mean=[0., 0., 0.],
-               std=[255., 255, 255.], fp16=False, padding=True):
+def preprocess(
+    img_data,
+    input_shape=(320, 320),
+    image_format="BGR",
+    channel_first=False,
+    mean=[0.0, 0.0, 0.0],
+    std=[255.0, 255, 255.0],
+    fp16=False,
+    padding=True,
+):
     # Use context manager to ensure file handle is closed promptly
     with Image.open(img_data) as image_file:
         image_file = image_file.convert("RGB")
@@ -230,7 +271,7 @@ def preprocess(img_data, input_shape=(320, 320), image_format='BGR', channel_fir
         img = np.array(image_file)
     # rgb to bgr，改变通道顺序
     # print("before preprocess result:", img.shape, img.dtype, np.min(img), np.max(img))
-    if image_format == 'BGR':
+    if image_format == "BGR":
         org_img = org_img[:, :, ::-1]
         img = img[:, :, ::-1]
     img = resize_img(img, input_shape, padding)
@@ -272,22 +313,34 @@ def draw_box(image, boxes, names, scores, show_label=True):
 
         if show_label:
             tf = max(line_width - 1, 1)  # font thickness
-            box_label = '%s: %.2f' % (names[i], scores[i])
-            w, h = cv2.getTextSize(box_label, 0, fontScale=line_width / 3, thickness=tf)[0]  # text width, height
+            box_label = "%s: %.2f" % (names[i], scores[i])
+            w, h = cv2.getTextSize(
+                box_label, 0, fontScale=line_width / 3, thickness=tf
+            )[0]  # text width, height
             outside = p1[1] - h - 3 >= 0  # label fits outside box
             p2 = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
 
             image = cv2.rectangle(image, p1, p2, box_color, -1, cv2.LINE_AA)  # filled
-            image = cv2.putText(image, box_label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2), 0,
-                                line_width / 3, txt_color, thickness=tf, lineType=cv2.LINE_AA)
+            image = cv2.putText(
+                image,
+                box_label,
+                (p1[0], p1[1] - 2 if outside else p1[1] + h + 2),
+                0,
+                line_width / 3,
+                txt_color,
+                thickness=tf,
+                lineType=cv2.LINE_AA,
+            )
     return image
 
 
-def increment_path(path, exist_ok=False, sep='', mkdir=False):
+def increment_path(path, exist_ok=False, sep="", mkdir=False):
     # Increment file or directory path, i.e. runs/exp --> runs/exp{sep}2, runs/exp{sep}3, ... etc.
     path = Path(path)  # os-agnostic
     if path.exists() and not exist_ok:
-        path, suffix = (path.with_suffix(''), path.suffix) if path.is_file() else (path, '')
+        path, suffix = (
+            (path.with_suffix(""), path.suffix) if path.is_file() else (path, "")
+        )
         dirs = glob.glob(f"{path}{sep}*")  # similar paths
         matches = [re.search(rf"%s{sep}(\d+)" % path.stem, d) for d in dirs]
         i = [int(m.groups()[0]) for m in matches if m]  # indices
@@ -300,55 +353,103 @@ def increment_path(path, exist_ok=False, sep='', mkdir=False):
 
 def parse_opt():
     parser = argparse.ArgumentParser(
-        description='YOLOv5 Continuous Inference on Huawei Ascend NPU',
+        description="YOLOv5 Continuous Inference on Huawei Ascend NPU",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-Example usage:
-  python detect_yolov5_ascend.py --input-dir ./input --output-dir ./output --output-format all
-  python detect_yolov5_ascend.py --input-dir /data/input --output-dir /data/output --output-format label
-  python detect_yolov5_ascend.py --input-dir ./input --output-dir ./output --stability-check 0.005 --max-wait 2.0
-        ''')
+        epilog="""
+        Example usage:
+          # 使用相对路径示例
+          python detect_yolov5_ascend.py --input-dir ../../../../data/input_images --output-dir ../../../../data/inference_results --output-format all
+
+          # 或者绝对路径
+          python detect_yolov5_ascend.py --input-dir /path/to/project/data/input_images --output-dir /path/to/project/data/inference_results
+                """,
+    )
 
     # Required arguments
-    parser.add_argument('--input-dir', type=str, required=True,
-                        help='Input directory where IPv4-named folders with images will be created')
-    parser.add_argument('--output-dir', type=str, required=True,
-                        help='Output directory for inference results')
+    parser.add_argument(
+        "--input-dir",
+        type=str,
+        required=True,
+        help="Input directory where IPv4-named folders with images will be created",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        required=True,
+        help="Output directory for inference results",
+    )
 
     # Output format control
-    parser.add_argument('--output-format', type=str, default='all',
-                        choices=['label', 'image', 'all'],
-                        help='Output format: "label" (only .txt files), "image" (only images with boxes), "all" (both)')
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        default="all",
+        choices=["label", "image", "all"],
+        help='Output format: "label" (only .txt files), "image" (only images with boxes), "all" (both)',
+    )
 
     # Model parameters
-    parser.add_argument('--weights', type=str, default=str(ROOT / 'ascend/yolov5s.om'),
-                        help='Path to model weights (.om file)')
-    parser.add_argument('--labels', type=str, default=str(ROOT / 'ascend/yolov5.label'),
-                        help='Path to label file')
-    parser.add_argument('--imgsz', nargs='+', type=int, default=[640, 640],
-                        help='Inference size [height, width]')
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default=str(ROOT / "ascend/yolov5s.om"),
+        help="Path to model weights (.om file)",
+    )
+    parser.add_argument(
+        "--labels",
+        type=str,
+        default=str(ROOT / "ascend/yolov5.label"),
+        help="Path to label file",
+    )
+    parser.add_argument(
+        "--imgsz",
+        nargs="+",
+        type=int,
+        default=[640, 640],
+        help="Inference size [height, width]",
+    )
 
     # Device parameters
-    parser.add_argument('--device', type=int, default=0,
-                        help='NPU device ID (e.g., 0 or 1)')
+    parser.add_argument(
+        "--device", type=int, default=0, help="NPU device ID (e.g., 0 or 1)"
+    )
 
     # Detection parameters
-    parser.add_argument('--conf-thres', type=float, default=0.25,
-                        help='Confidence threshold for detections')
-    parser.add_argument('--iou-thres', type=float, default=0.45,
-                        help='NMS IoU threshold')
-    parser.add_argument('--max-det', type=int, default=1000,
-                        help='Maximum detections per image')
-    parser.add_argument('--agnostic-nms', action='store_true',
-                        help='Class-agnostic NMS')
+    parser.add_argument(
+        "--conf-thres",
+        type=float,
+        default=0.25,
+        help="Confidence threshold for detections",
+    )
+    parser.add_argument(
+        "--iou-thres", type=float, default=0.45, help="NMS IoU threshold"
+    )
+    parser.add_argument(
+        "--max-det", type=int, default=1000, help="Maximum detections per image"
+    )
+    parser.add_argument(
+        "--agnostic-nms", action="store_true", help="Class-agnostic NMS"
+    )
 
     # Timing parameters
-    parser.add_argument('--stability-check', type=float, default=0.01,
-                        help='Interval in seconds between file size stability checks (default: 0.01)')
-    parser.add_argument('--max-wait', type=float, default=5.0,
-                        help='Maximum time in seconds to wait for a file to stabilize (default: 5.0)')
-    parser.add_argument('--scan-interval', type=float, default=1.0,
-                        help='Interval in seconds between directory scans (default: 1.0)')
+    parser.add_argument(
+        "--stability-check",
+        type=float,
+        default=0.01,
+        help="Interval in seconds between file size stability checks (default: 0.01)",
+    )
+    parser.add_argument(
+        "--max-wait",
+        type=float,
+        default=5.0,
+        help="Maximum time in seconds to wait for a file to stabilize (default: 5.0)",
+    )
+    parser.add_argument(
+        "--scan-interval",
+        type=float,
+        default=1.0,
+        help="Interval in seconds between directory scans (default: 1.0)",
+    )
 
     opt = parser.parse_args()
     return opt
@@ -356,7 +457,7 @@ Example usage:
 
 def get_all_images_in_directory(directory):
     """Recursively get all image files in directory and subdirectories."""
-    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'}
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
     image_files = []
 
     if not os.path.exists(directory):
@@ -407,15 +508,31 @@ def is_file_ready(file_path, stability_check_interval=0.01, max_wait=5.0):
         return False
 
 
-def process_image(image_path, rel_path, net, labels, input_size, conf_thres, iou_thres,
-                  agnostic_nms, max_det, fileter_classes, opt, input_dir, output_dir):
+def process_image(
+    image_path,
+    rel_path,
+    net,
+    labels,
+    input_size,
+    conf_thres,
+    iou_thres,
+    agnostic_nms,
+    max_det,
+    fileter_classes,
+    opt,
+    input_dir,
+    output_dir,
+):
     """Process a single image and save results."""
     t1 = time.perf_counter()
 
     # Preprocess and run inference
-    org_img, image_npy, image_bytes = preprocess(image_path, input_shape=input_size,
-                                                 image_format='BGR', channel_first=True)
-    print(f"Received image: {rel_path}, original size = {org_img.shape[1]}x{org_img.shape[0]}")
+    org_img, image_npy, image_bytes = preprocess(
+        image_path, input_shape=input_size, image_format="BGR", channel_first=True
+    )
+    print(
+        f"Received image: {rel_path}, original size = {org_img.shape[1]}x{org_img.shape[0]}"
+    )
 
     result = net.run([image_bytes])
     pred = np.frombuffer(bytearray(result[0]), dtype=np.float32)
@@ -429,7 +546,9 @@ def process_image(image_path, rel_path, net, labels, input_size, conf_thres, iou
 
     # Apply NMS
     pred = torch.tensor(pred)
-    pred = non_max_suppression(pred, conf_thres, iou_thres, fileter_classes, agnostic_nms, max_det=max_det)
+    pred = non_max_suppression(
+        pred, conf_thres, iou_thres, fileter_classes, agnostic_nms, max_det=max_det
+    )
 
     s = ""
     boxes = []
@@ -468,19 +587,19 @@ def process_image(image_path, rel_path, net, labels, input_size, conf_thres, iou
     subdir = os.path.dirname(rel_path)
 
     # Save label file if needed (create empty file even if no detections)
-    if opt.output_format in ['label', 'all']:
-        label_dir = os.path.join(output_dir, 'label', subdir)
+    if opt.output_format in ["label", "all"]:
+        label_dir = os.path.join(output_dir, "label", subdir)
         os.makedirs(label_dir, exist_ok=True)
-        txt_path = os.path.join(label_dir, img_name_noext + '.txt')
+        txt_path = os.path.join(label_dir, img_name_noext + ".txt")
 
-        with open(txt_path, 'w') as f:
+        with open(txt_path, "w") as f:
             for cls, xyxy, conf in detections:
                 line = (cls, *xyxy, conf)
-                f.write(('%g ' * len(line)).rstrip() % line + '\n')
+                f.write(("%g " * len(line)).rstrip() % line + "\n")
 
     # Save image with boxes if needed
-    if opt.output_format in ['image', 'all']:
-        image_dir = os.path.join(output_dir, 'image', subdir)
+    if opt.output_format in ["image", "all"]:
+        image_dir = os.path.join(output_dir, "image", subdir)
         os.makedirs(image_dir, exist_ok=True)
         output_path = os.path.join(image_dir, img_name)
 
@@ -538,7 +657,9 @@ if __name__ == "__main__":
         max_det = opt.max_det
         fileter_classes = None
 
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Model loaded successfully")
+        print(
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Model loaded successfully"
+        )
         print(f"Input size: {input_size}")
         print(f"Number of classes: {len(labels)}")
         print()
@@ -567,37 +688,59 @@ if __name__ == "__main__":
                     try:
                         # Check if file still exists
                         if not os.path.exists(image_path):
-                            print(f"  [{idx}/{len(image_list)}] SKIP: {rel_path} (file disappeared)")
+                            print(
+                                f"  [{idx}/{len(image_list)}] SKIP: {rel_path} (file disappeared)"
+                            )
                             skipped_count += 1
                             continue
 
                         # Wait for file to be completely written (size stability check)
-                        if not is_file_ready(image_path, opt.stability_check, opt.max_wait):
-                            print(f"  [{idx}/{len(image_list)}] SKIP: {rel_path} (file not ready/timeout)")
+                        if not is_file_ready(
+                            image_path, opt.stability_check, opt.max_wait
+                        ):
+                            print(
+                                f"  [{idx}/{len(image_list)}] SKIP: {rel_path} (file not ready/timeout)"
+                            )
                             skipped_count += 1
                             continue
 
                         # Process image
                         detection_result, process_time = process_image(
-                            image_path, rel_path, net, labels, input_size,
-                            conf_thres, iou_thres, agnostic_nms, max_det,
-                            fileter_classes, opt, input_dir, output_dir
+                            image_path,
+                            rel_path,
+                            net,
+                            labels,
+                            input_size,
+                            conf_thres,
+                            iou_thres,
+                            agnostic_nms,
+                            max_det,
+                            fileter_classes,
+                            opt,
+                            input_dir,
+                            output_dir,
                         )
 
                         # Delete source image after processing
                         os.remove(image_path)
 
                         total_processed += 1
-                        result_str = detection_result if detection_result else "No detections"
+                        result_str = (
+                            detection_result if detection_result else "No detections"
+                        )
 
                     except Exception as e:
-                        print(f"  [{idx}/{len(image_list)}] ERROR processing {rel_path}: {e}")
+                        print(
+                            f"  [{idx}/{len(image_list)}] ERROR processing {rel_path}: {e}"
+                        )
                         skipped_count += 1
 
                 batch_time = time.perf_counter() - batch_start_time
                 print(f"Batch processing completed in {batch_time:.2f}s")
                 if skipped_count > 0:
-                    print(f"Processed: {len(image_list) - skipped_count}/{len(image_list)} images ({skipped_count} skipped)")
+                    print(
+                        f"Processed: {len(image_list) - skipped_count}/{len(image_list)} images ({skipped_count} skipped)"
+                    )
                 print(f"Total processed: {total_processed} images")
 
             # Wait before next scan
@@ -611,6 +754,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
 
     finally:

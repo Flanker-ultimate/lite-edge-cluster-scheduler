@@ -7,12 +7,6 @@ from typing import List, Tuple
 
 import grpc
 
-
-ip = "10.134.74.155"  
-grpc_port = 9999
-dir_to_send = "/home/ubuntu/test1026"
-
-
 def list_image_files(directory: str) -> List[str]:
     if not os.path.isdir(directory):
         return []
@@ -51,22 +45,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="gRPC single-image concurrent uploader")
     parser.add_argument("-n", "--max", type=int, default=None, help="限制发送的最大文件数量；不传为不限制")
     parser.add_argument("-w", "--workers", type=int, default=8, help="并发线程数 (默认: 8)")
-    parser.add_argument("-H", "--host", default=ip, help="gRPC server host")
-    parser.add_argument("-P", "--port", type=int, default=grpc_port, help="gRPC server port")
-    parser.add_argument("-D", "--dir", default=dir_to_send, help="要发送的图片目录 (默认: ./pics)")
+    parser.add_argument("-H", "--host", default="10.134.74.155", help="gRPC server host")
+    parser.add_argument("-P", "--port", type=int, default=9999, help="gRPC server port")
+    parser.add_argument("-D", "--dir", default="/home/ubuntu/test1026", help="要发送的图片目录 (默认: ./pics)")
     args = parser.parse_args()
 
     images_dir = args.dir
     if not os.path.isabs(images_dir):
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        images_dir = os.path.join(script_dir, images_dir)
-
+        project_root = os.path.abspath(os.path.join(script_dir, "../../.."))  # 向上三级目录
+        images_dir = os.path.join(project_root, images_dir)
+        
     files = list_image_files(images_dir)
     if args.max is not None:
         limit = max(0, args.max)
         files = files[:limit]
     if not files:
-        print("no images found")
+        print(f"No images found in directory: {images_dir}")  
         return
 
     target = f"{args.host}:{args.port}"

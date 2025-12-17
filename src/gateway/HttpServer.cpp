@@ -12,8 +12,9 @@
 #include "TimeRecorder.h"
 #include <filesystem>
 using json = nlohmann::json;
-
-HttpServer::HttpServer(std::string ip, const int port, string absoulte_config_path) : ip(std::move(ip)), port(port) {
+Args HttpServer::args; 
+HttpServer::HttpServer(std::string ip, const int port, const Args &out_args) : ip(std::move(ip)), port(port) {
+    args = out_args;
 }
 
 bool HttpServer::Start() {
@@ -59,112 +60,112 @@ void modifyOrInsert(httplib::Headers &headers,
 // transfer request1
 // example url: requet?taskid=0&real_url=hello/lxs
 void HttpServer::HandleQuest(const httplib::Request &req, httplib::Response &res) {
-    TimeRecord<std::chrono::milliseconds> time_record("HandleQuest");
-    time_record.startRecord();
+    // TimeRecord<std::chrono::milliseconds> time_record("HandleQuest");
+    // time_record.startRecord();
 
-    TimeRecord<std::chrono::milliseconds> time_record_schedule("schedule");
-    time_record_schedule.startRecord();
+    // TimeRecord<std::chrono::milliseconds> time_record_schedule("schedule");
+    // time_record_schedule.startRecord();
 
-    // parse params
-    auto task_type_str = req.get_param_value("taskid");
-    auto real_url_param = req.get_param_value("real_url");
-    TaskType task_type;
-    // validate params
-    try {
-        task_type = StrToTaskType(task_type_str);
-    } catch (const std::invalid_argument &e) {
-        res.status = 400; // Bad Request
-        res.set_content("invalid format taskid", "text/plain");
-        return;
-    }
-    if (task_type == TaskType::Unknown) {
-        res.status = 400; // Bad Request
-        res.set_content("Missing taskid or real_url parameter", "text/plain");
-        return;
-    }
-    if (real_url_param.empty()) {
-        res.status = 400; // Bad Request
-        res.set_content("Missing taskid or real_url parameter", "text/plain");
-        return;
-    }
-    // get target_device_id
-    optional<SrvInfo> srv_info_opt = Docker_scheduler::getOrCrtSrvByTType(task_type);
-    if (srv_info_opt == nullopt) {
-        res.status = 400; // Bad Request
-        res.set_content("we can't get a useful srv", "text/plain");
-        return;
-    }
-    // print in the end of quest
-    time_record_schedule.endRecord();
+    // // parse params
+    // auto task_type_str = req.get_param_value("taskid");
+    // auto real_url_param = req.get_param_value("real_url");
+    // TaskType task_type;
+    // // validate params
+    // try {
+    //     task_type = StrToTaskType(task_type_str);
+    // } catch (const std::invalid_argument &e) {
+    //     res.status = 400; // Bad Request
+    //     res.set_content("invalid format taskid", "text/plain");
+    //     return;
+    // }
+    // if (task_type == TaskType::Unknown) {
+    //     res.status = 400; // Bad Request
+    //     res.set_content("Missing taskid or real_url parameter", "text/plain");
+    //     return;
+    // }
+    // if (real_url_param.empty()) {
+    //     res.status = 400; // Bad Request
+    //     res.set_content("Missing taskid or real_url parameter", "text/plain");
+    //     return;
+    // }
+    // // get target_device_id
+    // optional<SrvInfo> srv_info_opt = Docker_scheduler::getOrCrtSrvByTType(task_type);
+    // if (srv_info_opt == nullopt) {
+    //     res.status = 400; // Bad Request
+    //     res.set_content("we can't get a useful srv", "text/plain");
+    //     return;
+    // }
+    // // print in the end of quest
+    // time_record_schedule.endRecord();
 
-    SrvInfo srv_info = srv_info_opt.value();
-    string origin_host_ip = req.remote_addr;
-    int origin_host_port = req.remote_port;
-    string transfer_host_ip = req.local_addr;
-    int transfer_host_port = req.local_port;
-    string tgt_host_ip = srv_info.ip;
-    int tgt_host_port = srv_info.port;
+    // SrvInfo srv_info = srv_info_opt.value();
+    // string origin_host_ip = req.remote_addr;
+    // int origin_host_port = req.remote_port;
+    // string transfer_host_ip = req.local_addr;
+    // int transfer_host_port = req.local_port;
+    // string tgt_host_ip = srv_info.ip;
+    // int tgt_host_port = srv_info.port;
 
-    httplib::Client cli(tgt_host_ip, tgt_host_port);
-    // Forward the request to the target host.
-    httplib::MultipartFormDataItems items;
-    for (auto file: req.files) {
-        items.push_back(file.second);
-    }
+    // httplib::Client cli(tgt_host_ip, tgt_host_port);
+    // // Forward the request to the target host.
+    // httplib::MultipartFormDataItems items;
+    // for (auto file: req.files) {
+    //     items.push_back(file.second);
+    // }
 
-    httplib::Result response;
-    try {
-        response = cli.Post("/" + real_url_param, items);
-    } catch (const std::exception &e) {
-        spdlog::error("{} Error sending request: {}", req.path, e.what());
-        res.status = 500;
-        res.set_content("Internal Server Error", "text/plain");
-        return;
-    }
+    // httplib::Result response;
+    // try {
+    //     response = cli.Post("/" + real_url_param, items);
+    // } catch (const std::exception &e) {
+    //     spdlog::error("{} Error sending request: {}", req.path, e.what());
+    //     res.status = 500;
+    //     res.set_content("Internal Server Error", "text/plain");
+    //     return;
+    // }
 
-    if (response != nullptr && response->status != -1) {
-        // return to client
-        res.status = response->status;
-        res.set_header("Content-Type", response->get_header_value("Content-Type"));
+    // if (response != nullptr && response->status != -1) {
+    //     // return to client
+    //     res.status = response->status;
+    //     res.set_header("Content-Type", response->get_header_value("Content-Type"));
 
-        time_record.endRecord();
-        // append gateway_time to response
+    //     time_record.endRecord();
+    //     // append gateway_time to response
 
-        spdlog::info(
-            "URL: {},task_type_str:{}, real_url_param:{} origin_host_ip: {}:{}, transfer_host_ip: {}:{}, tgt_host_ip: {}:{}, duration_time:{}, time_record_schedule:{}",
-            req.path,
-            task_type_str,
-            real_url_param,
-            origin_host_ip,
-            origin_host_port,
-            transfer_host_ip,
-            transfer_host_port,
-            tgt_host_ip,
-            tgt_host_port,
-            time_record.getDuration(),
-            time_record_schedule.getDuration()
-        );
-        nlohmann::json jsonData = nlohmann::json::parse(response->body);
-        jsonData["gateway_time"] = (double) (time_record.getDuration());
-        res.body = jsonData.dump();
-    } else {
-        res.status = 502;
-        time_record.endRecord();
-        res.set_content("Bad Gateway", "text/plain");
-        spdlog::error("URL: {},task_type_str:{}, real_url_param:{} origin_host_ip: {}:{}, transfer_host_ip: {}:{}, tgt_host_ip: {}:{}, duration_time:{}, Error:{}",
-            req.path,
-            task_type_str,
-            real_url_param,
-            origin_host_ip,
-            origin_host_port,
-            transfer_host_ip,
-            transfer_host_port,
-            tgt_host_ip,
-            tgt_host_port,
-            time_record.getDuration(),
-            "Connection failed or response = nullptr"
-        );
-    }
+    //     spdlog::info(
+    //         "URL: {},task_type_str:{}, real_url_param:{} origin_host_ip: {}:{}, transfer_host_ip: {}:{}, tgt_host_ip: {}:{}, duration_time:{}, time_record_schedule:{}",
+    //         req.path,
+    //         task_type_str,
+    //         real_url_param,
+    //         origin_host_ip,
+    //         origin_host_port,
+    //         transfer_host_ip,
+    //         transfer_host_port,
+    //         tgt_host_ip,
+    //         tgt_host_port,
+    //         time_record.getDuration(),
+    //         time_record_schedule.getDuration()
+    //     );
+    //     nlohmann::json jsonData = nlohmann::json::parse(response->body);
+    //     jsonData["gateway_time"] = (double) (time_record.getDuration());
+    //     res.body = jsonData.dump();
+    // } else {
+    //     res.status = 502;
+    //     time_record.endRecord();
+    //     res.set_content("Bad Gateway", "text/plain");
+    //     spdlog::error("URL: {},task_type_str:{}, real_url_param:{} origin_host_ip: {}:{}, transfer_host_ip: {}:{}, tgt_host_ip: {}:{}, duration_time:{}, Error:{}",
+    //         req.path,
+    //         task_type_str,
+    //         real_url_param,
+    //         origin_host_ip,
+    //         origin_host_port,
+    //         transfer_host_ip,
+    //         transfer_host_port,
+    //         tgt_host_ip,
+    //         tgt_host_port,
+    //         time_record.getDuration(),
+    //         "Connection failed or response = nullptr"
+    //     );
+    // }
 }
 
 void HttpServer::HandleRegisterNode(const httplib::Request &req, httplib::Response &res) {
@@ -196,39 +197,28 @@ void HttpServer::HandleHotStart(const httplib::Request &req, httplib::Response &
 //新的调度接口
 void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &res) {
     namespace fs = std::filesystem;
-    fs::path currentPath = fs::current_path();
-    spdlog::info("Current path: {}", currentPath.string());
+    // 获取当前源文件所在目录
+    std::string current_file = __FILE__;
+    fs::path source_dir = fs::path(current_file).parent_path();
+    fs::path project_root = source_dir.parent_path().parent_path();
     try {
         TimeRecord<std::chrono::milliseconds> time_record_schedule("schedule");
         time_record_schedule.startRecord();
-
-        spdlog::info("请求接收");
         auto body_json = nlohmann::json::parse(req.body);
 
-        // 检查必要字段
-        if (!body_json.contains("ip") ||
-            !body_json.contains("filepath")
-            ){
+        // 检查必要字段：ip, filename, tasktype
+        if(!body_json.contains("ip")  || !body_json.contains("filename") || !body_json.contains("tasktype")) {
             res.status = 400;
             res.set_content(R"({"status":"error","msg":"missing required fields"})", "application/json");
             return;
         }
-        // 解析字段
-        std::string ip        = body_json["ip"].get<std::string>();
-        TaskType tasktype  = StrToTaskType(body_json["tasktype"].get<std::string>());
-        std::string filepath  = body_json["filepath"].get<std::string>();
-        std::string filename  = body_json["filename"].get<std::string>();
+        std::string ip = body_json["ip"].get<std::string>();
+        TaskType tasktype = StrToTaskType(body_json["tasktype"].get<std::string>());
+        std::string filename = body_json["filename"].get<std::string>();
 
-        // 拼接完整路径，例如 "192.168.43.219/" + "192.168.43.219_100.png"
-        if (!filepath.empty() && filepath.back() != '/') {
-            filepath += '/';
-        }
-        std::string _fullpath = filepath + filename;
-        // 直接使用相对路径（忽略原有的filepath字段）
-        std::string fullpath = "../../../src/modules/master/files/pic/" + _fullpath;
-        //std::cout << "当前路径: " << std::filesystem::current_path() << std::endl;
-
-
+        // 拼接图片文件路径
+        fs::path fsfullpath = project_root / args.task_path / ip / filename;
+        std::string fullpath = fsfullpath.string();
         // 读取图片
         std::ifstream ifs(fullpath, std::ios::binary);
         if (!ifs) {
@@ -241,14 +231,10 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
         buffer << ifs.rdbuf();
         std::string image_data = buffer.str();
 
-        //调度程序选择最佳设备
+        // 调度程序选择最佳设备
         Device device = Docker_scheduler::Pic_Schedule(tasktype);
         std::string target_ip = device.ip_address;
         int target_port = 20810;
-        //int target_port = device.agent_port;
-        //std::string target_ip="172.28.16.1";
-
-
 
         // 准备 JSON 元信息
         nlohmann::json meta_json;
@@ -257,7 +243,7 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
         meta_json["tasktype"] = body_json["tasktype"].get<std::string>();
         std::string meta_str = meta_json.dump();
 
-        //发送请求
+        // 发送请求
         httplib::Client cli(target_ip, target_port);
         // multipart 表单
         httplib::MultipartFormDataItems form_items = {
@@ -294,28 +280,18 @@ void HttpServer::HandleScheduleRound(const httplib::Request &req, httplib::Respo
     //std::cout << "Current path: " << currentPath << std::endl;
     try {
         auto body_json = nlohmann::json::parse(req.body);
-
-        // 检查必要字段
-        if (!body_json.contains("ip") ||
-            !body_json.contains("filepath")
-                ){
+        // 检查必要字段：ip, filename, tasktype
+        if(!body_json.contains("ip")  || !body_json.contains("filename") || !body_json.contains("tasktype")) {
             res.status = 400;
             res.set_content(R"({"status":"error","msg":"missing required fields"})", "application/json");
             return;
         }
-        // 解析字段
-        std::string ip        = body_json["ip"].get<std::string>();
-        TaskType tasktype  = StrToTaskType(body_json["tasktype"].get<std::string>());
-        std::string filepath  = body_json["filepath"].get<std::string>();
-        std::string filename  = body_json["filename"].get<std::string>();
+        std::string ip = body_json["ip"].get<std::string>();
+        TaskType tasktype = StrToTaskType(body_json["tasktype"].get<std::string>());
+        std::string filename = body_json["filename"].get<std::string>();
+        std::string fullpath = args.task_path + "/" + ip + "/" + filename;
 
-        // 拼接完整路径，例如 "192.168.43.219/" + "192.168.43.219_100.png"
-        if (!filepath.empty() && filepath.back() != '/') {
-            filepath += '/';
-        }
-        std::string fullpath = filepath + filename;
-
-        //调度程序选择最佳设备
+        // 调度程序选择最佳设备
         Device device = Docker_scheduler::RoundRobin_Schedule(tasktype);
         std::string target_ip = device.ip_address;
 //        int target_port = device.agent_port;
