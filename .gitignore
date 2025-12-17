@@ -1,6 +1,7 @@
 .vscode
 .idea
 build/
+workspace/
 _deps/
 src/_deps/
 src/CMakeFiles
