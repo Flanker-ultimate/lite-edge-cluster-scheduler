@@ -36,7 +36,7 @@
 
 5. **slave-rst_sender**
    - 结果发送器
-   - 定期扫描输出目录并发送结果到目标设备（默认端口8888，可配置）
+   - 定期扫描输出目录并发送结果
 
 ## 🚀 快速开始
 
@@ -66,6 +66,17 @@ cmake --build build -j 8
 ```
 
 ## 📋 使用说明
+
+### 0 清楚旧数据
+```bash
+rm -rf workspace/client/data/rst/*
+
+rm -rf workspace/slave/data/input/*
+rm -rf workspace/slave/data/output/label/*
+rm -rf workspace/slave/data/output/image/
+
+rm -rf workspace/master/data/upload/*
+```
 
 ### 1️⃣ 启动任务管理器（Task Manager）
 ```bash
@@ -118,22 +129,11 @@ python3 src/modules/slave/recv_server.py
 
 ### 5️⃣ 启动结果发送器（Result Sender）
 ```bash
-# 使用默认端口 8888
-python3 ./src/modules/slave/rst_send.py \
-    --input-dir workspace/slave/data/output/label \
-    --interval 10
-
-# 使用自定义端口
 python3 ./src/modules/slave/rst_send.py \
     --input-dir workspace/slave/data/output/label \
     --interval 10 \
-    --target-port 9999
+    --target-port 8888
 ```
-
-**参数说明：**
-- `-i/--input-dir`: 监控目录路径（默认：data/inference_results/label）
-- `-t/--interval`: 检查间隔时间（秒，默认：5）
-- `-p/--target-port`: 目标端口（默认：8888）
 
 ### 6️⃣ 启动客户端接收器（Client Receiver）
 ```bash
