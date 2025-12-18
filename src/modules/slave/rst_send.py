@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 """
 IP子目录图片监控与发送程序（严格模式）
-功能：严格监控存在的input目录，优先处理最旧IP子目录，批量发送图片 发送路由为 ip子目录名:8888/
+功能：严格监控存在的input目录，优先处理最旧IP子目录，批量发送图片
 改进：
 1. 修复空目录阻塞问题
 2. 支持输入参数和默认值
+3. 支持自定义目标端口
 使用方式：
-# 使用默认目录 "/home/HwHiAiUser/co-compute-imgs/output/label"
-# python3 rst_send.py
+# 使用默认目录和端口
+python3 rst_send.py
 
-# 指定目录和间隔 --input-dir指定读取哪里的结果
-# python3 rst_send.py --input-dir /path/to/dir --interval 10
+# 指定目录和间隔
+python3 rst_send.py --input-dir /path/to/dir --interval 10
+
+# 使用自定义端口
+python3 rst_send.py --input-dir /path/to/dir --target-port 9999
 
 # 使用短参数
-python3 rst_send.py -i /path/to/dir -t 3
+python3 rst_send.py -i /path/to/dir -t 3 -p 9999
 """
 
 import argparse
 import http.client
-import json
 import os
 import time
 from urllib.parse import urlparse
@@ -35,17 +38,16 @@ DEFAULT_INPUT_DIR = os.path.join(DATA_DIR, "inference_results", "label")
 
 
 class StrictIPSender:
-    def __init__(self, input_dir: str, interval: int = 5, master_report_url: str = None):
+    def __init__(self, input_dir: str, interval: int = 5, target_port: int = 8888):
         """
         Args:
             input_dir: 必须存在的input目录路径
             interval: 检查间隔(秒)
+            target_port: 目标端口，用于发送文件
         """
         self.input_dir = os.path.abspath(input_dir)
         self.interval = interval
-        self.master_report_url = master_report_url or os.environ.get(
-            "MASTER_REPORT_URL", "http://127.0.0.1:7000/task/report"
-        )
+        self.target_port = target_port
 
         # 验证目录是否存在
         if not os.path.exists(self.input_dir):
@@ -111,7 +113,6 @@ class StrictIPSender:
         for filename, file_path in files_to_send:
             if self._send_single_file(file_path, ip):
                 success_count += 1
-                self._report_task_completion(filename)
                 try:
                     os.remove(file_path)
                     print(f"🗑️  已删除: {filename}")
@@ -123,11 +124,11 @@ class StrictIPSender:
     def _send_single_file(self, file_path: str, ip: str) -> bool:
         """发送单个文件到指定IP"""
         try:
-            target_url = f"http://{ip}:8888/recv_rst"
+            target_url = f"http://{ip}:{self.target_port}/recv_rst"
             url_parts = urlparse(target_url)
 
             conn = http.client.HTTPConnection(
-                host=url_parts.hostname, port=url_parts.port or 80, timeout=10
+                host=url_parts.hostname, port=url_parts.port, timeout=10
             )
 
             boundary = "----" + str(time.time()).encode().hex()
@@ -161,26 +162,6 @@ class StrictIPSender:
         except Exception as e:
             print(f"⚠️  发送到 {ip} 出错: {e}")
             return False
-
-    def _report_task_completion(self, filename: str) -> None:
-        """向 Master 汇报任务完成"""
-        if not self.master_report_url:
-            return
-        try:
-            parsed = urlparse(self.master_report_url)
-            conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-            conn = conn_cls(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), timeout=5)
-            path = parsed.path or "/task/report"
-            body = json.dumps({"filename": filename}).encode("utf-8")
-            headers = {"Content-Type": "application/json", "Content-Length": str(len(body))}
-            conn.request("POST", path, body=body, headers=headers)
-            resp = conn.getresponse()
-            resp.read()
-            if resp.status != 200:
-                print(f"⚠️  汇报任务 {filename} 失败，状态码 {resp.status}")
-            conn.close()
-        except Exception as exc:
-            print(f"⚠️  汇报任务 {filename} 到 Master 失败: {exc}")
 
     def process_next_ip(self):
         """处理下一个最旧的IP目录（只处理有文件的目录）"""
@@ -222,10 +203,11 @@ def parse_args():
         "--interval", "-t", type=int, default=5, help="检查间隔时间(秒) (默认: 5)"
     )
     parser.add_argument(
-        "--master-report-url",
-        "-m",
-        default=os.environ.get("MASTER_REPORT_URL", "http://127.0.0.1:7000/task/report"),
-        help="Master 回调地址 (默认: 环境变量 MASTER_REPORT_URL 或 http://127.0.0.1:7000/task/report)",
+        "--target-port",
+        "-p",
+        type=int,
+        default=8888,
+        help="目标端口 (默认: 8888)",
     )
     return parser.parse_args()
 
@@ -235,7 +217,9 @@ if __name__ == "__main__":
 
     try:
         sender = StrictIPSender(
-            input_dir=args.input_dir, interval=args.interval, master_report_url=args.master_report_url
+            input_dir=args.input_dir,
+            interval=args.interval,
+            target_port=args.target_port
         )
         sender.run()
     except (FileNotFoundError, NotADirectoryError) as e:

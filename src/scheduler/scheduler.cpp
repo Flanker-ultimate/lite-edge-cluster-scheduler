@@ -118,6 +118,19 @@ void Docker_scheduler::SchedulerLoop() {
         Device target_device;
         try {
             target_device = task.schedule_strategy == ScheduleStrategy::ROUND_ROBIN ? RoundRobin_Schedule(task.task_type) : Schedule(task.task_type);
+
+            // Add device load logging
+            {
+                std::shared_lock<std::shared_mutex> lock(devs_mutex);
+                auto status_it = device_status.find(target_device.global_id);
+                if (status_it != device_status.end()) {
+                    const auto& status = status_it->second;
+                    spdlog::info("Task {} selected device {} [CPU: {:.2f}%, MEM: {:.2f}%, XPU: {:.2f}%, Bandwidth: {:.2f}Mbps, Latency: {}ms]",
+                                 task.task_id, target_device.ip_address,
+                                 status.cpu_used * 100, status.mem_used * 100, status.xpu_used * 100,
+                                 status.net_bandwidth, static_cast<int>(status.net_latency * 1000));
+                }
+            }
         } catch (const std::exception &e) {
             spdlog::error("Schedule failed for task {}: {}", task.task_id, e.what());
             task.retry_count++;
@@ -353,6 +366,7 @@ bool Docker_scheduler::HotStartAllNodeByTType(TaskType ttype) {
 
 void Docker_scheduler::startDeviceInfoCollection() {
     std::thread([]() {
+        int count = 0; // 用于每10次打印一次所有设备的负载
         while (true) {
             {
                 std::unique_lock<std::shared_mutex> lock(devs_mutex);
@@ -390,6 +404,22 @@ void Docker_scheduler::startDeviceInfoCollection() {
                     }
                 }
             }
+
+            // 每10次打印一次所有设备的负载信息
+            if (++count % 10 == 0) {
+                spdlog::info("=== Device Load Summary ===");
+                for (const auto& [device_id, dev]: device_static_info) {
+                    auto status_it = device_status.find(device_id);
+                    if (status_it != device_status.end()) {
+                        const auto& status = status_it->second;
+                        spdlog::info("Device {} ({}): CPU: {:.2f}%. MEM: {:.2f}%, XPU: {:.2f}%, Bandwidth: {:.2f}Mbps, Latency: {}ms",
+                                     dev.ip_address, dev.type,
+                                     status.cpu_used * 100, status.mem_used * 100, status.xpu_used * 100,
+                                     status.net_bandwidth, static_cast<int>(status.net_latency * 1000));
+                    }
+                }
+            }
+
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
     }).detach();

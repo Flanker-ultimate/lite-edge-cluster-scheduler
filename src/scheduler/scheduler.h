@@ -137,6 +137,10 @@ public:
 
     static void display_devinfo();
 
+    // Methods to access device status information for logging
+    static std::map<DeviceID, DeviceStatus>& getDeviceStatus() { return device_status; }
+    static std::shared_mutex& getDeviceMutex() { return devs_mutex; }
+
     /// @brief init scheduler
     /// @param filepath profiling file path
     static void init(string filepath);

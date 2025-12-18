@@ -249,6 +249,27 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
         task.client_ip = ip;
         task.task_type = tasktype;
         task.schedule_strategy = strategy;
+
+        // 先获取预计调度的设备信息
+        Device target_dev;
+        try {
+            target_dev = task.schedule_strategy == ScheduleStrategy::ROUND_ROBIN ? Docker_scheduler::RoundRobin_Schedule(task.task_type) : Docker_scheduler::Schedule(task.task_type);
+
+            // 打印设备负载信息
+            std::shared_lock<std::shared_mutex> lock(Docker_scheduler::getDeviceMutex());
+            auto& device_status = Docker_scheduler::getDeviceStatus();
+            auto status_it = device_status.find(target_dev.global_id);
+            if (status_it != device_status.end()) {
+                const auto& status = status_it->second;
+                spdlog::info("HTTP API: Task {} for client {} will be scheduled to device {} [CPU: {:.2f}%, MEM: {:.2f}%, XPU: {:.2f}%, Bandwidth: {:.2f}Mbps, Latency: {}ms]",
+                             filename, ip, target_dev.ip_address,
+                             status.cpu_used * 100, status.mem_used * 100, status.xpu_used * 100,
+                             status.net_bandwidth, static_cast<int>(status.net_latency * 1000));
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn("HTTP API: Failed to get device info for task {}: {}", filename, e.what());
+        }
+
         Docker_scheduler::SubmitTask(task, false);
 
         spdlog::info("task {} enqueued for {} scheduling", filename,
