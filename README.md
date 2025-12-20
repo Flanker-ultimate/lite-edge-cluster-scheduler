@@ -70,7 +70,6 @@ cmake --build build -j 8
 ### 0 清除旧数据
 ```bash
 # client：清空请求/结果目录
-rm -rf workspace/client/data/*/req/*
 rm -rf workspace/client/data/*/rst/*
 
 # slave：清空各 service 的输入/输出与日志
@@ -83,9 +82,6 @@ rm -rf workspace/master/data/upload/*
 
 # 【可选】清空 master/gateway 运行日志目录（如启用了文件日志）
 rm -rf workspace/master/log/*
-
-# 【可选】清空仓库根目录 logs/（如存在）
-rm -rf logs/*
 
 # 【可选】重置 agent 设备 ID（将重新生成 `.agent_config.json`）
 # rm -f .agent_config.json
