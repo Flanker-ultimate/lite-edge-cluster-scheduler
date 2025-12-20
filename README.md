@@ -84,17 +84,13 @@ rm -rf workspace/master/data/upload/*
 python3 ./src/modules/master/task_manager.py \
     --port 9999 \
     --strategy load \
-    --upload_path=workspace/master/data/upload \
-    --http-host 127.0.0.1 \
-    --http-port 9998
+    --upload_path=workspace/master/data/upload
 
 # 或者使用轮询策略
 python3 ./src/modules/master/task_manager.py \
     --port 9999 \
     --strategy roundrobin \
-    --upload_path=workspace/master/data/upload \
-    --http-host 127.0.0.1 \
-    --http-port 9998
+    --upload_path=workspace/master/data/upload
 ```
 **参数说明：**
 - `-p/--port`: gRPC监听端口（默认：9999）
@@ -102,7 +98,6 @@ python3 ./src/modules/master/task_manager.py \
   - `load`: 负载贪心策略（对应 `?stargety=load`） - 基于设备负载的智能调度
   - `roundrobin`: 轮询策略（对应 `?stargety=roundrobin`） - 公平的轮询分配
 - `-u/--upload_path`: 图片上传目录
-- `--http-host/--http-port`: 提供 `POST /delete_task` 给 gateway 在 `/task_completed` 后 best-effort 调用，用于删除已完成任务的上传文件
 
 ### 2️⃣ 启动调度网关（Gateway）
 ```bash
@@ -112,10 +107,6 @@ python3 ./src/modules/master/task_manager.py \
 ```
 
 **HTTP API:**  `http://127.0.0.1:6666`
-
-**可选环境变量（默认不需要设置）**
-- `TASK_MANAGER_HTTP_HOST`：task_manager 删除接口 host（默认 `127.0.0.1`）
-- `TASK_MANAGER_HTTP_PORT`：task_manager 删除接口 port（默认 `9998`）
 
 **服务迁移（任务重新分发）**
 - gateway 会周期检测 slave 上报的 `net_latency`，当延迟超过 10s 时，会将该 slave 上“已分发但未处理完”的任务从运行队列取出并重新加入 pending 队列等待再次调度

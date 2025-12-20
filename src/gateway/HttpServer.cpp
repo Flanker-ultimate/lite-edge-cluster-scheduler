@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <chrono>
 #include <thread>
-#include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <utility>
 #include "DockerClient.h"
@@ -353,35 +352,6 @@ void HttpServer::HandleTaskCompleted(const httplib::Request &req, httplib::Respo
             const auto &task = completed_task.value();
             spdlog::info("Task {} completed successfully on device {} for client {}",
                          task.task_id, device_id, task.client_ip);
-
-            // best-effort: notify task_manager to delete uploaded task file
-            try {
-                const char *host_env = std::getenv("TASK_MANAGER_HTTP_HOST");
-                const char *port_env = std::getenv("TASK_MANAGER_HTTP_PORT");
-                std::string host = host_env ? host_env : "127.0.0.1";
-                int port = port_env ? std::stoi(port_env) : 9998;
-
-                httplib::Client cli(host, port);
-                cli.set_connection_timeout(2, 0);
-                cli.set_read_timeout(2, 0);
-                cli.set_write_timeout(2, 0);
-
-                json payload = {
-                    {"client_ip", task.client_ip},
-                    {"filename", task.task_id},
-                };
-
-                auto tm_res = cli.Post("/delete_task", payload.dump(), "application/json");
-                if (!tm_res) {
-                    spdlog::warn("Failed to notify task_manager delete_task (no response): {}:{}", host, port);
-                } else if (tm_res->status >= 300) {
-                    spdlog::warn("task_manager delete_task returned status {}: {}", tm_res->status, tm_res->body);
-                } else {
-                    spdlog::info("task_manager delete_task OK: client_ip={}, filename={}", task.client_ip, task.task_id);
-                }
-            } catch (const std::exception &e) {
-                spdlog::warn("Notify task_manager delete_task failed: {}", e.what());
-            }
 
             res.status = 200;
             res.set_content("{\"status\":\"ok\",\"msg\":\"task marked as completed\"}", "application/json");

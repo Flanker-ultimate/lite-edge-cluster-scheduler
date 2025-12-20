@@ -4,7 +4,6 @@ import json
 import base64
 import threading
 import http.client
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from concurrent import futures
 from typing import Dict, Iterator
@@ -16,73 +15,6 @@ import time
 DEFAULT_TASK_TYPE = "yolo"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_UPLOAD_ROOT = os.path.join(SCRIPT_DIR, "files", "pic")
-
-
-def start_delete_http_server(host: str, port: int, upload_root: str) -> ThreadingHTTPServer:
-    upload_root_abs = os.path.abspath(upload_root)
-
-    class DeleteHandler(BaseHTTPRequestHandler):
-        def _send_json(self, status: int, payload: Dict) -> None:
-            body = json.dumps(payload).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_POST(self) -> None:
-            if self.path != "/delete_task":
-                self._send_json(404, {"status": "error", "msg": "not found"})
-                return
-
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except Exception:
-                length = 0
-            raw = self.rfile.read(length) if length > 0 else b""
-
-            try:
-                data = json.loads(raw.decode("utf-8")) if raw else {}
-            except Exception as exc:
-                self._send_json(400, {"status": "error", "msg": f"invalid json: {exc}"})
-                return
-
-            client_ip = data.get("client_ip")
-            filename = data.get("filename")
-            if not isinstance(client_ip, str) or not client_ip.strip():
-                self._send_json(400, {"status": "error", "msg": "client_ip required"})
-                return
-            if not isinstance(filename, str) or not filename.strip():
-                self._send_json(400, {"status": "error", "msg": "filename required"})
-                return
-            if "/" in client_ip or "\\" in client_ip or "/" in filename or "\\" in filename:
-                self._send_json(400, {"status": "error", "msg": "path separators not allowed"})
-                return
-
-            safe_filename = os.path.basename(filename)
-            target_path = os.path.abspath(os.path.join(upload_root_abs, client_ip, safe_filename))
-            if not (target_path == upload_root_abs or target_path.startswith(upload_root_abs + os.sep)):
-                self._send_json(400, {"status": "error", "msg": "invalid path"})
-                return
-
-            try:
-                if os.path.exists(target_path):
-                    os.remove(target_path)
-                    self._send_json(200, {"status": "ok", "deleted": True, "path": target_path})
-                else:
-                    self._send_json(200, {"status": "ok", "deleted": False, "msg": "not found"})
-            except Exception as exc:
-                self._send_json(500, {"status": "error", "msg": str(exc)})
-
-        def log_message(self, format: str, *args) -> None:  # noqa: A003
-            # silence default logging
-            return
-
-    httpd = ThreadingHTTPServer((host, port), DeleteHandler)
-    t = threading.Thread(target=httpd.serve_forever, daemon=True)
-    t.start()
-    print(f"HTTP delete server listening on http://{host}:{port} (upload_root={upload_root_abs})")
-    return httpd
 
 
 def ensure_directory_exists(path: str) -> None:
@@ -253,8 +185,6 @@ def serve(
     port: int = 50051,
     strategy: str = "load",
     upload_path: str = None,
-    http_host: str = "127.0.0.1",
-    http_port: int = 9998,
 ) -> None:
     # 优先使用命令行传入的 upload_path，如果没有则使用默认值
     if upload_path is None:
@@ -293,15 +223,10 @@ def serve(
     print(f"Saving files to: {os.path.abspath(upload_root)}")
     print(f"Forwarding strategy: {strategy}")
     server.start()
-    httpd = start_delete_http_server(host=http_host, port=http_port, upload_root=upload_root)
     try:
         server.wait_for_termination()
     except KeyboardInterrupt:
         print("shutting down...")
-        try:
-            httpd.shutdown()
-        except Exception:
-            pass
         server.stop(grace=None)
 
 
@@ -315,16 +240,10 @@ if __name__ == "__main__":
     # 添加新的上传路径参数
     parser.add_argument("-u", "--upload_path", type=str, default=None,
                         help=f"Custom upload directory path (default: {DEFAULT_UPLOAD_ROOT})")
-    parser.add_argument("--http-host", type=str, default="127.0.0.1",
-                        help="HTTP delete server host (default: 127.0.0.1)")
-    parser.add_argument("--http-port", type=int, default=9998,
-                        help="HTTP delete server port (default: 9998)")
     args = parser.parse_args()
     
     serve(
         port=args.port,
         strategy=args.strategy,
         upload_path=args.upload_path,
-        http_host=args.http_host,
-        http_port=args.http_port,
     )
