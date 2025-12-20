@@ -7,6 +7,10 @@ from typing import List, Tuple
 
 import grpc
 
+def project_root() -> str:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(script_dir, "../../.."))
+
 def list_image_files(directory: str) -> List[str]:
     if not os.path.isdir(directory):
         return []
@@ -45,17 +49,32 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="gRPC single-image concurrent uploader")
     parser.add_argument("-n", "--max", type=int, default=None, help="限制发送的最大文件数量；不传为不限制")
     parser.add_argument("-w", "--workers", type=int, default=8, help="并发线程数 (默认: 8)")
-    parser.add_argument("-H", "--host", default="10.134.74.155", help="gRPC server host")
+    parser.add_argument("-H", "--host", default="127.0.0.1", help="gRPC server host")
     parser.add_argument("-P", "--port", type=int, default=9999, help="gRPC server port")
-    parser.add_argument("-D", "--dir", default="/home/ubuntu/test1026", help="要发送的图片目录 (默认: ./pics)")
+    parser.add_argument(
+        "-D",
+        "--dir",
+        default="",
+        help="input directory (override); default uses workspace/client/data/<tasktype>/req",
+    )
+    parser.add_argument(
+        "--root",
+        default="workspace/client/data",
+        help="client data root directory (default: workspace/client/data)",
+    )
     parser.add_argument("--tasktype", default="YoloV5", help="service/task type (e.g. YoloV5, Bert, ...)")
     args = parser.parse_args()
 
-    images_dir = args.dir
+    root_dir = args.root
+    if not os.path.isabs(root_dir):
+        root_dir = os.path.join(project_root(), root_dir)
+
+    images_dir = args.dir.strip()
     if not os.path.isabs(images_dir):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(script_dir, "../../.."))  # 向上三级目录
-        images_dir = os.path.join(project_root, images_dir)
+        if images_dir:
+            images_dir = os.path.join(project_root(), images_dir)
+        else:
+            images_dir = os.path.join(root_dir, args.tasktype, "req")
         
     files = list_image_files(images_dir)
     if args.max is not None:

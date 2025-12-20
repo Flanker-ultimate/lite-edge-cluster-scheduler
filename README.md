@@ -69,11 +69,11 @@ cmake --build build -j 8
 
 ### 0 清楚旧数据
 ```bash
-rm -rf workspace/client/data/rst/*
+rm -rf workspace/client/data/*/rst/*
+rm -rf workspace/client/data/*/req/*
 
-rm -rf workspace/slave/data/input/*
-rm -rf workspace/slave/data/output/label/*
-rm -rf workspace/slave/data/output/image/
+rm -rf workspace/slave/data/*/input/*
+rm -rf workspace/slave/data/*/output/*
 
 rm -rf workspace/master/data/upload/*
 ```
@@ -131,7 +131,7 @@ agent 默认会在注册成功后启动并守护 `slave-recv_server` 与 `slave-
 
 ### 4【可选】启动接收服务器（Receive Server）
 ```bash
-python3 src/modules/slave/recv_server.py
+python3 src/modules/slave/recv_server.py --config config_files/slave_backend.json
 ```
 说明：默认不需要手动启动（由 Agent 负责启动/守护）。只有在你使用 `--no-manage-services` 关闭 Agent 管理时才需要执行本步骤。
 
@@ -163,7 +163,7 @@ recv_server 会读取 `config_files/slave_backend.json`，按服务(tasktype)落
 ```bash
 python3 ./src/modules/slave/rst_send.py \
     --config config_files/slave_backend.json \
-    --input-dir workspace/slave/data/output \
+    --input-dir workspace/slave/data \
     --interval 10 \
     --target-port 8888 \
     --gateway-host 127.0.0.1 \
@@ -176,16 +176,16 @@ python3 ./src/modules/slave/rst_send.py \
 ```bash
 python3 ./src/modules/client/rst_recv.py \
     --port 8888 \
-    --dir workspace/client/data/rst
+    --dir workspace/client/data
 ```
-client receiver 会按 `service/` 子目录存放结果（例如 `workspace/client/data/rst/YoloV5/...`）。
+client receiver 会按 `workspace/client/data/<ServiceName>/rst/...` 存放结果（例如 `workspace/client/data/YoloV5/rst/...`）。
+如果你只跑单一服务，也可以加 `--tasktype YoloV5` 作为缺省目录（当请求未携带 `service` 字段时生效）。
 
 ### 7️⃣ 启动任务发送器（Task Sender）
 ```bash
 python3 ./src/modules/client/req_send.py \
     --host=127.0.0.1 \
     --port=9999 \
-    --dir=workspace/client/data/req \
     --tasktype=YoloV5 \
     --max=200 \
     --workers=8

@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import http.client
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, jsonify, request
@@ -39,6 +40,8 @@ RECV_COUNT = 0
 RECV_LOG_INTERVAL = 500  # 每收到 500 张记录一次时间戳
 
 app = Flask(__name__)
+
+_SLAVE_BACKEND_CONFIG_PATH = ""
 
 
 # ===== 统一返回（失败也返回 200） =====
@@ -80,8 +83,10 @@ def _normalize_tasktype(raw) -> str:
 
 
 def _load_slave_backend_config(project_root: str) -> dict:
-    cfg_env = os.environ.get("SLAVE_BACKEND_CONFIG", "").strip()
-    cfg_path = cfg_env or os.path.join(project_root, "config_files", "slave_backend.json")
+    cfg_path = (_SLAVE_BACKEND_CONFIG_PATH or "").strip()
+    if not cfg_path:
+        cfg_env = os.environ.get("SLAVE_BACKEND_CONFIG", "").strip()
+        cfg_path = cfg_env or os.path.join(project_root, "config_files", "slave_backend.json")
     try:
         with open(cfg_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -260,6 +265,18 @@ def srv():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Slave recv_server: receive tasks and persist to service input dir")
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("SLAVE_BACKEND_CONFIG", os.path.join(PROJECT_ROOT, "config_files", "slave_backend.json")),
+        help="path to slave_backend.json (default: env SLAVE_BACKEND_CONFIG or config_files/slave_backend.json)",
+    )
+    args = parser.parse_args()
+
+    _SLAVE_BACKEND_CONFIG_PATH = os.path.abspath(args.config) if args.config else ""
+    if _SLAVE_BACKEND_CONFIG_PATH:
+        os.environ["SLAVE_BACKEND_CONFIG"] = _SLAVE_BACKEND_CONFIG_PATH
+
     print(f"[recv_server] listening on 0.0.0.0:{AGENT_PORT}")
     print("  Storage: use config_files/slave_backend.json services.<ServiceName>.{input_dir,output_dir,result_dir}")
     print(f"  Logs: {LOG_DIR}")

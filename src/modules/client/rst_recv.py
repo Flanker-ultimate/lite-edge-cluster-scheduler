@@ -25,8 +25,9 @@ class FileReceiverHandler(BaseHTTPRequestHandler):
     file_count = 0
     count_lock = Lock()
 
-    def __init__(self, storage_dir, *args, **kwargs):
+    def __init__(self, storage_dir, default_tasktype: str = "", *args, **kwargs):
         self.storage_dir = storage_dir
+        self.default_tasktype = (default_tasktype or "").strip()
         os.makedirs(self.storage_dir, exist_ok=True)
         super().__init__(*args, **kwargs)
     
@@ -61,6 +62,12 @@ class FileReceiverHandler(BaseHTTPRequestHandler):
                 service = os.path.basename(service)
             if service in (".", ".."):
                 service = ""
+
+            # 兼容单 service 场景：允许通过命令行 --tasktype 指定存储目录
+            if not service and self.default_tasktype:
+                service = self.default_tasktype
+            elif service and self.default_tasktype and service != self.default_tasktype:
+                print(f"[rst_recv] warning: incoming service={service} != --tasktype={self.default_tasktype}; use incoming service")
             
             if 'file' not in form:
                 self.send_error(400, "需要文件字段'file'")
@@ -73,9 +80,8 @@ class FileReceiverHandler(BaseHTTPRequestHandler):
                 
             # 保持原始文件名
             filename = os.path.basename(file_item.filename)
-            save_dir = self.storage_dir
-            if service:
-                save_dir = os.path.join(self.storage_dir, service)
+            # 目录约定：<root>/<service>/rst/<filename>
+            save_dir = os.path.join(self.storage_dir, service or "Unknown", "rst")
             os.makedirs(save_dir, exist_ok=True)
             save_path = os.path.join(save_dir, filename)
             
@@ -140,8 +146,11 @@ def parse_args():
                         default=8888,
                         help='监听端口 (默认: 8888)')
     parser.add_argument('--dir', '-d',
-                        default="./received_files",
-                        help='文件存储目录 (默认: ./received_files)')
+                        default="workspace/client/data",
+                        help='client data root directory (default: workspace/client/data)')
+    parser.add_argument('--tasktype',
+                        default="",
+                        help='default service/task type directory (optional; when request has no service field)')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -154,4 +163,20 @@ if __name__ == "__main__":
     print(f" - 端口: {args.port}")
     print(f" - 存储目录: {os.path.abspath(args.dir)}")
     
-    run_server(port=args.port, storage_dir=args.dir)
+    # 创建自定义请求处理器类
+    handler_class = lambda *h_args, **h_kwargs: FileReceiverHandler(args.dir, args.tasktype, *h_args, **h_kwargs)
+
+    server_address = ('', args.port)
+    httpd = HTTPServer(server_address, handler_class)
+    print(f"文件接收服务启动:")
+    print(f" - 监听端口: {args.port}")
+    print(f" - 存储路径: {os.path.abspath(args.dir)}")
+    if args.tasktype:
+        print(f" - 默认 tasktype: {args.tasktype}")
+    
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    httpd.server_close()
+    print("服务已停止")

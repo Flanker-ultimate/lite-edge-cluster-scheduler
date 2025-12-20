@@ -2,6 +2,6 @@
   "python_bin": "python3",
   "restart_delay_sec": 2,
   "autostart_services": ["YoloV5"],
-  "recv_server_cmd": "{PYTHON} src/modules/slave/recv_server.py",
+  "recv_server_cmd": "{PYTHON} src/modules/slave/recv_server.py --config config_files/slave_backend.json",
   "rst_send_cmd": "{PYTHON} src/modules/slave/rst_send.py --config config_files/slave_backend.json --input-dir workspace/slave/data/output --interval 5 --target-port 8888 --gateway-host {MASTER_IP} --gateway-port {MASTER_PORT} --device-id {DEVICE_ID}"
 }

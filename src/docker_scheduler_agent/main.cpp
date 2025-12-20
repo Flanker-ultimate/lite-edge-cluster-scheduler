@@ -210,6 +210,7 @@ static void SetupAgentLogging() {
         auto logger = std::make_shared<spdlog::logger>("agent", sinks.begin(), sinks.end());
         spdlog::set_default_logger(logger);
         spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
+        spdlog::set_level(spdlog::level::info);
         spdlog::flush_on(spdlog::level::info);
     } catch (...) {
         // fallback to default stderr logger
@@ -248,6 +249,12 @@ static std::vector<std::string> GetAgentAutostartFromSlaveBackend(const json &cf
         }
     }
     return out;
+}
+
+static std::string DetectSlaveBackendConfigPath() {
+    const char *cfg_env = std::getenv("SLAVE_BACKEND_CONFIG");
+    std::string cfg_path = (cfg_env && *cfg_env) ? cfg_env : (std::filesystem::path(g_project_root) / "config_files" / "slave_backend.json").string();
+    return cfg_path;
 }
 
 static std::vector<std::string> UniqueUnion(std::vector<std::string> a, const std::vector<std::string> &b) {
@@ -392,6 +399,15 @@ static void StartSlaveServices(const std::string &device_id) {
     rst_send_cmd = ReplaceAll(rst_send_cmd, "{MASTER_PORT}", std::to_string(g_gateway_port));
 
     spdlog::info("[agent] manage services with restart_delay_sec={}", restart_delay_sec);
+    spdlog::info("[agent] log_dir={}", g_slave_log_dir);
+    spdlog::info("[agent] slave_backend_config={}", DetectSlaveBackendConfigPath());
+    if (!autostart_services_cfg.empty()) {
+        spdlog::info("[agent] autostart_services(from agent_services.json)={}", JoinCsv(autostart_services_cfg));
+    } else {
+        spdlog::info("[agent] autostart_services(from agent_services.json)=<empty>");
+    }
+    spdlog::info("[agent] recv_server_cmd={}", recv_server_cmd);
+    spdlog::info("[agent] rst_send_cmd={}", rst_send_cmd);
     std::vector<std::pair<std::string, std::string>> recv_envs = {
         {"SLAVE_BACKEND_CONFIG", "config_files/slave_backend.json"},
     };
@@ -409,6 +425,12 @@ static void StartSlaveServices(const std::string &device_id) {
     }
     const auto autostart_services_backend = GetAgentAutostartFromSlaveBackend(g_slave_backend_cfg);
     const auto autostart_services = UniqueUnion(autostart_services_cfg, autostart_services_backend);
+    if (!autostart_services_backend.empty()) {
+        spdlog::info("[agent] agent_autostart(from slave_backend.json)={}", JoinCsv(autostart_services_backend));
+    }
+    if (!autostart_services.empty()) {
+        spdlog::info("[agent] ensure backends at startup={}", JoinCsv(autostart_services));
+    }
     for (const auto &svc : autostart_services) {
         EnsureBackendStarted(svc);
     }
@@ -674,16 +696,17 @@ int main(int argc, char* argv[]) {
         }
         dev_info.net_bandwidth = bandwidth;
 
-        // 打印设备信息到终端
-        spdlog::info("\n===== 设备信息 =====");
-        spdlog::info("CPU 使用率: {}%", dev_info.cpu_used * 100);
-        spdlog::info("内存使用率: {}%", dev_info.mem_used * 100);
-        spdlog::info("NPU 使用率: {}%", dev_info.xpu_used * 100);
-        spdlog::info("网络延迟: {} ms", dev_info.net_latency);
-        spdlog::info("网络带宽: {} Mbps", dev_info.net_bandwidth);
-        spdlog::info("断开等待时间: {}", (dev_info.disconnectTime <= 0 ? "Disabled" : std::to_string(dev_info.disconnectTime) + " s"));
-        spdlog::info("重连等待时间: {} s", dev_info.reconnectTime);
-        spdlog::info("====================\n");
+        // 采集日志改为 debug，避免高频刷屏（master 会周期性拉取）
+        spdlog::debug(
+            "device_info cpu={:.2f}% mem={:.2f}% xpu={:.2f}% latency_ms={} bandwidth_mbps={:.2f} disconnect={} reconnect={}",
+            dev_info.cpu_used * 100,
+            dev_info.mem_used * 100,
+            dev_info.xpu_used * 100,
+            dev_info.net_latency,
+            dev_info.net_bandwidth,
+            dev_info.disconnectTime,
+            dev_info.reconnectTime
+        );
 
         // 构建响应
         json payload = dev_info.to_json();
