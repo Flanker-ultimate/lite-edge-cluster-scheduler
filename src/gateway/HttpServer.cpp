@@ -353,6 +353,25 @@ void HttpServer::HandleTaskCompleted(const httplib::Request &req, httplib::Respo
             spdlog::info("Task {} completed successfully on device {} for client {}",
                          task.task_id, device_id, task.client_ip);
 
+            if (!args.keep_upload) {
+                namespace fs = std::filesystem;
+                std::string current_file = __FILE__;
+                fs::path source_dir = fs::path(current_file).parent_path();
+                fs::path project_root = source_dir.parent_path().parent_path();
+                fs::path upload_path = project_root / args.task_path / task.client_ip / task.task_id;
+
+                std::error_code ec;
+                const bool removed = fs::remove(upload_path, ec);
+                if (ec) {
+                    spdlog::warn("Failed to delete uploaded file after completion: path={} err={}",
+                                 upload_path.string(), ec.message());
+                } else if (removed) {
+                    spdlog::info("Deleted uploaded file after completion: path={}", upload_path.string());
+                } else {
+                    spdlog::debug("Uploaded file already missing (skip delete): path={}", upload_path.string());
+                }
+            }
+
             res.status = 200;
             res.set_content("{\"status\":\"ok\",\"msg\":\"task marked as completed\"}", "application/json");
             return;

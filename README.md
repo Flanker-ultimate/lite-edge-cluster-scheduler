@@ -67,15 +67,28 @@ cmake --build build -j 8
 
 ## 📋 使用说明
 
-### 0 清楚旧数据
+### 0 清除旧数据
 ```bash
-rm -rf workspace/client/data/*/rst/*
+# client：清空请求/结果目录
 rm -rf workspace/client/data/*/req/*
+rm -rf workspace/client/data/*/rst/*
 
+# slave：清空各 service 的输入/输出与日志
 rm -rf workspace/slave/data/*/input/*
 rm -rf workspace/slave/data/*/output/*
+rm -rf workspace/slave/log/*
 
+# master：清空上传目录（task_manager 落盘）
 rm -rf workspace/master/data/upload/*
+
+# 【可选】清空 master/gateway 运行日志目录（如启用了文件日志）
+rm -rf workspace/master/log/*
+
+# 【可选】清空仓库根目录 logs/（如存在）
+rm -rf logs/*
+
+# 【可选】重置 agent 设备 ID（将重新生成 `.agent_config.json`）
+# rm -f .agent_config.json
 ```
 
 ### 1️⃣ 启动任务管理器（Task Manager）
@@ -107,6 +120,8 @@ python3 ./src/modules/master/task_manager.py \
 ```
 
 **HTTP API:**  `http://127.0.0.1:6666`
+
+默认行为：当收到 `POST /task_completed` 且 `status=success` 时，gateway 会 best-effort 删除 `--task` 目录下对应的上传文件（`<client_ip>/<filename>`），防止目录无限增长。若希望保留上传文件用于排查，可加 `--keep-upload`。
 
 **服务迁移（任务重新分发）**
 - gateway 会周期检测 slave 上报的 `net_latency`，当延迟超过 10s 时，会将该 slave 上“已分发但未处理完”的任务从运行队列取出并重新加入 pending 队列等待再次调度
