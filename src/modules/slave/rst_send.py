@@ -22,9 +22,11 @@ python3 rst_send.py -i /path/to/dir -t 3 -p 9999
 
 import argparse
 import http.client
+import json
 import os
 import time
 from urllib.parse import urlparse
+from typing import List, Tuple
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../../"))
@@ -36,9 +38,30 @@ DATA_DIR = os.environ.get("DATA_DIR", os.path.join(PROJECT_ROOT, "data"))
 # 注意：YOLO 输出通常会自动创建 'label' 子目录，所以这里指向那个子目录
 DEFAULT_INPUT_DIR = os.path.join(DATA_DIR, "inference_results", "label")
 
+# Gateway配置（用于任务完成通知）
+DEFAULT_GATEWAY_HOST = os.environ.get("GATEWAY_HOST", "127.0.0.1")
+try:
+    DEFAULT_GATEWAY_PORT = int(os.environ.get("GATEWAY_PORT", "6666"))
+except Exception:
+    DEFAULT_GATEWAY_PORT = 6666
+DEFAULT_DEVICE_ID = os.environ.get("DEVICE_ID", "unknown")
+DEFAULT_SLAVE_BACKEND_CONFIG = os.environ.get(
+    "SLAVE_BACKEND_CONFIG", os.path.join(PROJECT_ROOT, "config_files", "slave_backend.json")
+)
+
 
 class StrictIPSender:
-    def __init__(self, input_dir: str, interval: int = 5, target_port: int = 8888):
+    def __init__(
+        self,
+        input_dir: str,
+        interval: int = 5,
+        target_port: int = 8888,
+        gateway_host: str = DEFAULT_GATEWAY_HOST,
+        gateway_port: int = DEFAULT_GATEWAY_PORT,
+        device_id: str = DEFAULT_DEVICE_ID,
+        config_path: str = DEFAULT_SLAVE_BACKEND_CONFIG,
+        service: str = "",
+    ):
         """
         Args:
             input_dir: 必须存在的input目录路径
@@ -48,21 +71,87 @@ class StrictIPSender:
         self.input_dir = os.path.abspath(input_dir)
         self.interval = interval
         self.target_port = target_port
+        self.gateway_host = gateway_host
+        self.gateway_port = int(gateway_port)
+        self.device_id = device_id
+        self.config_path = os.path.abspath(config_path) if config_path else ""
+        self.service = service.strip()
+        self.service_dirs = self._load_service_result_dirs()
 
-        # 验证目录是否存在
-        if not os.path.exists(self.input_dir):
-            raise FileNotFoundError(f"目录不存在: {self.input_dir}")
-        if not os.path.isdir(self.input_dir):
-            raise NotADirectoryError(f"路径不是目录: {self.input_dir}")
+        # 兼容旧模式：未配置服务目录时，仍按 input_dir 扫描 <ip>/...
+        if not self.service_dirs:
+            if not os.path.exists(self.input_dir):
+                raise FileNotFoundError(f"directory not found: {self.input_dir}")
+            if not os.path.isdir(self.input_dir):
+                raise NotADirectoryError(f"not a directory: {self.input_dir}")
+            print(f"[rst_send] single-dir mode: {self.input_dir}")
+        else:
+            for _, p in self.service_dirs:
+                os.makedirs(p, exist_ok=True)
+            print("[rst_send] multi-service mode:")
+            for svc, p in self.service_dirs:
+                print(f"  - {svc}: {p}")
 
-        print(f"严格模式监控目录: {self.input_dir}")
+    def _load_service_result_dirs(self) -> List[Tuple[str, str]]:
+        if not self.config_path or not os.path.isfile(self.config_path):
+            return []
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            return []
 
-    def get_ip_dirs_sorted(self):
+        services = cfg.get("services") if isinstance(cfg, dict) else None
+        if not isinstance(services, dict):
+            return []
+
+        out: List[Tuple[str, str]] = []
+        for name, entry in services.items():
+            if not isinstance(name, str) or not isinstance(entry, dict):
+                continue
+            if self.service and name != self.service:
+                continue
+            result_dir = entry.get("result_dir")
+            if not isinstance(result_dir, str) or not result_dir.strip():
+                continue
+            if not os.path.isabs(result_dir):
+                result_dir = os.path.abspath(os.path.join(PROJECT_ROOT, result_dir))
+            out.append((name, result_dir))
+        return out
+
+    def notify_gateway_task_completed(self, task_id: str, client_ip: str, service: str, status: str = "success") -> bool:
+        """通知gateway该任务已完成（或失败）。"""
+        try:
+            conn = http.client.HTTPConnection(self.gateway_host, self.gateway_port, timeout=5)
+            payload = json.dumps(
+                {
+                    "task_id": task_id,
+                    "device_id": self.device_id,
+                    "client_ip": client_ip,
+                    "service": service,
+                    "status": status,
+                }
+            ).encode("utf-8")
+            headers = {"Content-Type": "application/json", "Content-Length": str(len(payload))}
+            conn.request("POST", "/task_completed", body=payload, headers=headers)
+            resp = conn.getresponse()
+            _ = resp.read()
+            return resp.status == 200
+        except Exception as e:
+            print(f"gateway notify error: {e}")
+            return False
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def get_ip_dirs_sorted(self, root_dir: str):
         """获取包含文件的IP子目录列表（旧优先）"""
         valid_ip_dirs = []
         try:
-            for item in os.listdir(self.input_dir):
-                item_path = os.path.join(self.input_dir, item)
+            for item in os.listdir(root_dir):
+                item_path = os.path.join(root_dir, item)
                 if os.path.isdir(item_path) and self._is_valid_ip(item):
                     # 检查目录是否包含文件
                     if any(
@@ -92,7 +181,7 @@ class StrictIPSender:
         except ValueError:
             return False
 
-    def send_files_to_ip(self, ip: str, ip_path: str):
+    def send_files_to_ip(self, service: str, ip: str, ip_path: str):
         """批量发送目录下所有文件到对应IP"""
         files_to_send = []
 
@@ -111,7 +200,11 @@ class StrictIPSender:
         # 批量发送
         success_count = 0
         for filename, file_path in files_to_send:
-            if self._send_single_file(file_path, ip):
+            if self._send_single_file(file_path, ip, service):
+                notified = self.notify_gateway_task_completed(task_id=filename, client_ip=ip, service=service, status="success")
+                if not notified:
+                    print(f"gateway notify failed, keep file for retry: {filename}")
+                    continue
                 success_count += 1
                 try:
                     os.remove(file_path)
@@ -121,7 +214,7 @@ class StrictIPSender:
 
         print(f"✅ {ip} 处理完成: {success_count}/{len(files_to_send)} 成功")
 
-    def _send_single_file(self, file_path: str, ip: str) -> bool:
+    def _send_single_file(self, file_path: str, ip: str, service: str) -> bool:
         """发送单个文件到指定IP"""
         try:
             target_url = f"http://{ip}:{self.target_port}/recv_rst"
@@ -138,15 +231,16 @@ class StrictIPSender:
                 file_content = f.read()
 
             filename = os.path.basename(file_path)
-            body = (
-                (
-                    f"--{boundary}\r\n"
-                    f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-                    f"Content-Type: application/octet-stream\r\n\r\n"
-                ).encode()
-                + file_content
-                + f"\r\n--{boundary}--\r\n".encode()
-            )
+            body = b""
+            body += f"--{boundary}\r\n".encode()
+            body += f'Content-Disposition: form-data; name="service"\r\n\r\n{service}\r\n'.encode()
+            body += f"--{boundary}\r\n".encode()
+            body += (
+                f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                f"Content-Type: application/octet-stream\r\n\r\n"
+            ).encode()
+            body += file_content
+            body += f"\r\n--{boundary}--\r\n".encode()
 
             conn.request("POST", url_parts.path, body, headers)
             response = conn.getresponse()
@@ -164,15 +258,37 @@ class StrictIPSender:
             return False
 
     def process_next_ip(self):
-        """处理下一个最旧的IP目录（只处理有文件的目录）"""
-        ip_dirs = self.get_ip_dirs_sorted()
-        if not ip_dirs:
+        """处理下一个最旧的IP目录（多服务模式会跨 service 选择最旧的目录）"""
+        candidates: List[Tuple[float, str, str, str]] = []
+
+        if self.service_dirs:
+            for svc, root_dir in self.service_dirs:
+                ip_dirs = self.get_ip_dirs_sorted(root_dir)
+                if not ip_dirs:
+                    continue
+                ip, ip_path = ip_dirs[0]
+                try:
+                    mtime = os.path.getmtime(ip_path)
+                except Exception:
+                    mtime = time.time()
+                candidates.append((mtime, svc, ip, ip_path))
+        else:
+            ip_dirs = self.get_ip_dirs_sorted(self.input_dir)
+            if ip_dirs:
+                ip, ip_path = ip_dirs[0]
+                try:
+                    mtime = os.path.getmtime(ip_path)
+                except Exception:
+                    mtime = time.time()
+                candidates.append((mtime, "default", ip, ip_path))
+
+        if not candidates:
             print(f"⏳ 未发现有效IP子目录，等待 {self.interval} 秒...")
             return False
 
-        # 处理第一个最旧的目录
-        ip, ip_path = ip_dirs[0]
-        self.send_files_to_ip(ip, ip_path)
+        candidates.sort(key=lambda x: x[0])
+        _, svc, ip, ip_path = candidates[0]
+        self.send_files_to_ip(svc, ip, ip_path)
         return True
 
     def run(self):
@@ -200,6 +316,16 @@ def parse_args():
         help=f"监控目录路径 (默认: {DEFAULT_INPUT_DIR})",
     )
     parser.add_argument(
+        "--config",
+        default=DEFAULT_SLAVE_BACKEND_CONFIG,
+        help=f"slave backend config (default: {DEFAULT_SLAVE_BACKEND_CONFIG})",
+    )
+    parser.add_argument(
+        "--service",
+        default="",
+        help="only send results for a specific service name (e.g. YoloV5)",
+    )
+    parser.add_argument(
         "--interval", "-t", type=int, default=5, help="检查间隔时间(秒) (默认: 5)"
     )
     parser.add_argument(
@@ -208,6 +334,22 @@ def parse_args():
         type=int,
         default=8888,
         help="目标端口 (默认: 8888)",
+    )
+    parser.add_argument(
+        "--gateway-host",
+        default=DEFAULT_GATEWAY_HOST,
+        help=f"gateway host (default: {DEFAULT_GATEWAY_HOST})",
+    )
+    parser.add_argument(
+        "--gateway-port",
+        type=int,
+        default=DEFAULT_GATEWAY_PORT,
+        help=f"gateway port (default: {DEFAULT_GATEWAY_PORT})",
+    )
+    parser.add_argument(
+        "--device-id",
+        default=DEFAULT_DEVICE_ID,
+        help=f"device id (default: {DEFAULT_DEVICE_ID})",
     )
     return parser.parse_args()
 
@@ -219,7 +361,12 @@ if __name__ == "__main__":
         sender = StrictIPSender(
             input_dir=args.input_dir,
             interval=args.interval,
-            target_port=args.target_port
+            target_port=args.target_port,
+            gateway_host=args.gateway_host,
+            gateway_port=args.gateway_port,
+            device_id=args.device_id,
+            config_path=args.config,
+            service=args.service,
         )
         sender.run()
     except (FileNotFoundError, NotADirectoryError) as e:

@@ -1,5 +1,17 @@
 #include "SocketServer.h"
 #include <spdlog/spdlog.h>
+#ifdef _WIN32
+
+void SocketServer::HandleQuest() {
+    spdlog::warn("SocketServer is not supported on Windows build");
+}
+
+int SocketServer::Start() {
+    spdlog::warn("SocketServer::Start() skipped (Windows build)");
+    return 0;
+}
+
+#else
 #include <cerrno>
 #include <string>
 #include <cstring>
@@ -131,6 +143,8 @@ void handle_epoll_event(int epoll_fd, struct epoll_event *events, int num_events
         }
     }
 }
+
+
 
 
 // client_sock connected with origin host
@@ -348,3 +362,5 @@ int SocketServer::Start() {
     close(server_sockfd);
     return 0;
 }
+
+#endif

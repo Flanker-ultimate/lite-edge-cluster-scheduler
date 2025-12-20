@@ -84,13 +84,17 @@ rm -rf workspace/master/data/upload/*
 python3 ./src/modules/master/task_manager.py \
     --port 9999 \
     --strategy load \
-    --upload_path=workspace/master/data/upload
+    --upload_path=workspace/master/data/upload \
+    --http-host 127.0.0.1 \
+    --http-port 9998
 
 # 或者使用轮询策略
 python3 ./src/modules/master/task_manager.py \
     --port 9999 \
     --strategy roundrobin \
-    --upload_path=workspace/master/data/upload
+    --upload_path=workspace/master/data/upload \
+    --http-host 127.0.0.1 \
+    --http-port 9998
 ```
 **参数说明：**
 - `-p/--port`: gRPC监听端口（默认：9999）
@@ -98,6 +102,7 @@ python3 ./src/modules/master/task_manager.py \
   - `load`: 负载贪心策略（对应 `?stargety=load`） - 基于设备负载的智能调度
   - `roundrobin`: 轮询策略（对应 `?stargety=roundrobin`） - 公平的轮询分配
 - `-u/--upload_path`: 图片上传目录
+- `--http-host/--http-port`: 提供 `POST /delete_task` 给 gateway 在 `/task_completed` 后 best-effort 调用，用于删除已完成任务的上传文件
 
 ### 2️⃣ 启动调度网关（Gateway）
 ```bash
@@ -108,6 +113,13 @@ python3 ./src/modules/master/task_manager.py \
 
 **HTTP API:**  `http://127.0.0.1:6666`
 
+**可选环境变量（默认不需要设置）**
+- `TASK_MANAGER_HTTP_HOST`：task_manager 删除接口 host（默认 `127.0.0.1`）
+- `TASK_MANAGER_HTTP_PORT`：task_manager 删除接口 port（默认 `9998`）
+
+**服务迁移（任务重新分发）**
+- gateway 会周期检测 slave 上报的 `net_latency`，当延迟超过 10s 时，会将该 slave 上“已分发但未处理完”的任务从运行队列取出并重新加入 pending 队列等待再次调度
+
 ### 3️⃣ 启动设备代理（Agent）
 ```bash
 ./build/src/docker_scheduler_agent/docker_scheduler_agent \
@@ -117,23 +129,57 @@ python3 ./src/modules/master/task_manager.py \
     --reconnect 20 \
     --bandwidth-fluctuate
 ```
+agent 默认会在注册成功后启动并守护 `slave-recv_server` 与 `slave-rst_sender`。
+- 可通过 `--no-manage-services` 关闭（此时需手动启动 `recv_server.py`/`rst_send.py`）。
+- 启动命令可通过 `config_files/agent_services.json` 配置，或设置 `AGENT_SERVICES_CONFIG` 指向自定义路径（会替换 `{DEVICE_ID}`/`{MASTER_IP}`/`{MASTER_PORT}`/`{PYTHON}`）。
+- agent 会将 `agent_services.json` 中的 `autostart_services` 上报给 master，用于让 scheduler 优先调度到“已启动对应服务”的节点。
 **参数说明：**
 - `--bandwidth-fluctuate`: 启用网络带宽波动模拟
 - `--disconnect`: 断开重连间隔（秒）
 - `--reconnect`: 重试间隔（秒）
 
-### 4️⃣ 启动接收服务器（Receive Server）
+### 4【可选】启动接收服务器（Receive Server）
 ```bash
 python3 src/modules/slave/recv_server.py
 ```
+说明：默认不需要手动启动（由 Agent 负责启动/守护）。只有在你使用 `--no-manage-services` 关闭 Agent 管理时才需要执行本步骤。
 
-### 5️⃣ 启动结果发送器（Result Sender）
+recv_server 会读取 `config_files/slave_backend.json`，按服务(tasktype)落盘到 `input_dir/<ip>/...`；后端（binary/container）的启动/守护统一由 agent 负责。
+前提：`tasktype` 与 `service` 名字完全一致（大小写也一致），即“一个 tasktype 对应唯一一个 service”。
+
+#### `slave_backend.json` 字段说明（核心）
+- `services.<ServiceName>.backend`: 后端类型
+  - `binary`: 由 `agent` 启动/守护 `start_cmd` 指定的可执行程序（需支持循环处理输入目录并持续输出）
+  - `container`: 由 `agent` 启动/守护 `start_cmd` 指定的容器启动命令（容器内需按 `INPUT_DIR/OUTPUT_DIR` 约定循环处理）
+  - `local`: 仅落盘，不负责启动后端（你可自行在 slave 上启动对应进程）
+- `services.<ServiceName>.agent_autostart`: 是否在 agent 启动时就同步启动该 service 的后端（默认按需在首次收到任务时启动）
+- `services.<ServiceName>.input_dir`: 该 service 的输入根目录；实际任务文件会写入 `input_dir/<client_ip>/<filename>`
+- `services.<ServiceName>.output_dir`: 该 service 的输出根目录（由后端写入处理结果）
+- `services.<ServiceName>.result_dir`: `rst_send` 扫描并回传结果的目录（通常是 `output_dir/label`）
+- `services.<ServiceName>.start_cmd`: 当 `backend` 为 `binary/container` 时必填，支持占位符 `${INPUT_DIR}`、`${OUTPUT_DIR}`、`${SERVICE_NAME}`
+
+#### slave 侧目录约定（推荐）
+- `workspace/slave/data/<ServiceName>/input/<client_ip>/...`：recv_server 落盘的输入
+- `workspace/slave/data/<ServiceName>/output/...`：后端输出根目录（result_dir 在此目录下的某个子目录）
+
+#### slave 侧日志约定
+- `workspace/slave/log/agent.log`：agent 日志（注册、ensure_service、进程启动/重启等）
+- `workspace/slave/log/recv_server.log`：recv_server 日志
+- `workspace/slave/log/rst_send.log`：rst_send 日志
+- `workspace/slave/log/<ServiceName>/service.log`：该 service 后端处理器日志（binary/container 的 stdout/stderr）
+
+### 5【可选】启动结果发送器（Result Sender）
 ```bash
 python3 ./src/modules/slave/rst_send.py \
-    --input-dir workspace/slave/data/output/label \
+    --config config_files/slave_backend.json \
+    --input-dir workspace/slave/data/output \
     --interval 10 \
-    --target-port 8888
+    --target-port 8888 \
+    --gateway-host 127.0.0.1 \
+    --gateway-port 6666 \
+    --device-id slave-1
 ```
+说明：默认不需要手动启动（由 Agent 负责启动/守护）。只有在你使用 `--no-manage-services` 关闭 Agent 管理时才需要执行本步骤。
 
 ### 6️⃣ 启动客户端接收器（Client Receiver）
 ```bash
@@ -141,16 +187,19 @@ python3 ./src/modules/client/rst_recv.py \
     --port 8888 \
     --dir workspace/client/data/rst
 ```
+client receiver 会按 `service/` 子目录存放结果（例如 `workspace/client/data/rst/YoloV5/...`）。
 
 ### 7️⃣ 启动任务发送器（Task Sender）
 ```bash
-python3 ./src/modules/client/send_pic.py \
+python3 ./src/modules/client/req_send.py \
     --host=127.0.0.1 \
     --port=9999 \
     --dir=workspace/client/data/req \
+    --tasktype=YoloV5 \
     --max=200 \
     --workers=8
 ```
+说明：`--tasktype` 用于指定该任务希望由哪个服务（服务名=tasktype）处理；master 会携带该字段转发，scheduler 会按 tasktype 选择支持该服务的 slave。
 
 ## ⚙️ 调度策略配置
 

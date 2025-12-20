@@ -6,6 +6,9 @@
 #include <sstream>
 #include <cstring>
 #include <unordered_map>
+#include <chrono>
+#include <thread>
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <utility>
 #include "DockerClient.h"
@@ -13,6 +16,8 @@
 #include <filesystem>
 using json = nlohmann::json;
 Args HttpServer::args; 
+std::thread HttpServer::health_check_thread_;
+std::atomic<bool> HttpServer::health_check_stop_{false};
 HttpServer::HttpServer(std::string ip, const int port, const Args &out_args) : ip(std::move(ip)), port(port) {
     args = out_args;
 }
@@ -29,11 +34,13 @@ bool HttpServer::Start() {
     svr.Post("/hot_start", this->HandleHotStart);
     svr.Post(SCHEDULE_ROUTE, this->HandleSchedule);
     svr.Post(DISCONNECT_NODE_ROUTE, this->HandleDisconnect);
+    svr.Post(TASK_COMPLETED_ROUTE, this->HandleTaskCompleted);
 
     spdlog::info("HttpServer started success，ip:{} port:{}",this->ip, this->port);
+    StartHealthCheckThread();
     auto result = svr.listen(this->ip, this->port);
     if (!result) {
-        spdlog::error("HttpServer start failed！");
+        spdlog::error("HttpServer start failed!");
         return false;
     }
     return true;
@@ -312,5 +319,151 @@ void HttpServer::HandleDisconnect(const httplib::Request &req, httplib::Response
         spdlog::error("HandleDisconnect exception: {}", e.what());
         res.status = 400;
         res.set_content(R"({"status":"error","msg":"invalid json or internal error"})", "application/json");
+    }
+}
+
+void HttpServer::HandleTaskCompleted(const httplib::Request &req, httplib::Response &res) {
+    try {
+        auto jsonData = json::parse(req.body);
+
+        // 解析必填字段
+        if (!jsonData.contains("task_id") || !jsonData.contains("device_id") ||
+            !jsonData.contains("client_ip") || !jsonData.contains("status")) {
+            res.status = 400;
+            res.set_content("{\"status\":\"error\",\"msg\":\"missing required fields: task_id, device_id, client_ip, status\"}", "application/json");
+            return;
+        }
+
+        std::string task_id = jsonData["task_id"];
+        std::string device_id = jsonData["device_id"];
+        std::string client_ip = jsonData["client_ip"];
+        std::string status = jsonData["status"];
+
+        // 如果状态是成功，则从运行中的任务列表中移除
+        if (status == "success") {
+            auto completed_task = Docker_scheduler::GetTaskQueueManager().CompleteTaskAndGet(task_id);
+            if (!completed_task.has_value()) {
+                // 可能已经因为服务迁移/重试而不在运行队列，这里返回200保证幂等
+                spdlog::warn("Task completion received but not found in running queue: reported_task_id={}", task_id);
+                res.status = 200;
+                res.set_content("{\"status\":\"ok\",\"msg\":\"task not found (maybe already migrated)\"}", "application/json");
+                return;
+            }
+
+            const auto &task = completed_task.value();
+            spdlog::info("Task {} completed successfully on device {} for client {}",
+                         task.task_id, device_id, task.client_ip);
+
+            // best-effort: notify task_manager to delete uploaded task file
+            try {
+                const char *host_env = std::getenv("TASK_MANAGER_HTTP_HOST");
+                const char *port_env = std::getenv("TASK_MANAGER_HTTP_PORT");
+                std::string host = host_env ? host_env : "127.0.0.1";
+                int port = port_env ? std::stoi(port_env) : 9998;
+
+                httplib::Client cli(host, port);
+                cli.set_connection_timeout(2, 0);
+                cli.set_read_timeout(2, 0);
+                cli.set_write_timeout(2, 0);
+
+                json payload = {
+                    {"client_ip", task.client_ip},
+                    {"filename", task.task_id},
+                };
+
+                auto tm_res = cli.Post("/delete_task", payload.dump(), "application/json");
+                if (!tm_res) {
+                    spdlog::warn("Failed to notify task_manager delete_task (no response): {}:{}", host, port);
+                } else if (tm_res->status >= 300) {
+                    spdlog::warn("task_manager delete_task returned status {}: {}", tm_res->status, tm_res->body);
+                } else {
+                    spdlog::info("task_manager delete_task OK: client_ip={}, filename={}", task.client_ip, task.task_id);
+                }
+            } catch (const std::exception &e) {
+                spdlog::warn("Notify task_manager delete_task failed: {}", e.what());
+            }
+
+            res.status = 200;
+            res.set_content("{\"status\":\"ok\",\"msg\":\"task marked as completed\"}", "application/json");
+            return;
+        } else {
+            // 处理失败情况，可以选择重试或移入失败列表
+            spdlog::warn("Task {} failed on device {} for client {}: status={}",
+                       task_id, device_id, client_ip, status);
+            res.status = 200;
+            res.set_content("{\"status\":\"ok\",\"msg\":\"task failure acknowledged\"}", "application/json");
+        }
+
+    } catch (const std::exception &e) {
+        spdlog::error("HandleTaskCompleted exception: {}", e.what());
+        res.status = 400;
+        res.set_content("{\"status\":\"error\",\"msg\":\"invalid json\"}", "application/json");
+    }
+}
+
+void HttpServer::StartHealthCheckThread() {
+    // Start only once; the server runs for the lifetime of the process.
+    static std::atomic<bool> started{false};
+    bool expected = false;
+    if (!started.compare_exchange_strong(expected, true)) {
+        return;
+    }
+
+    health_check_stop_.store(false);
+    health_check_thread_ = std::thread(&HttpServer::HealthCheckLoop, this);
+    health_check_thread_.detach();
+    spdlog::info("Gateway health-check thread started (interval_ms={}, latency_threshold_sec={})",
+                 HEALTH_CHECK_INTERVAL, HEALTH_CHECK_LATENCY_THRESHOLD);
+}
+
+void HttpServer::HealthCheckLoop() {
+    using Clock = std::chrono::steady_clock;
+
+    struct UuidHasher {
+        size_t operator()(const DeviceID &id) const noexcept {
+            const uint8_t *p = id.data;
+            size_t h = 1469598103934665603ull;
+            for (size_t i = 0; i < 16; ++i) {
+                h ^= static_cast<size_t>(p[i]);
+                h *= 1099511628211ull;
+            }
+            return h;
+        }
+    };
+    std::unordered_map<DeviceID, Clock::time_point, UuidHasher> last_recover;
+
+    while (!health_check_stop_.load()) {
+        std::vector<DeviceID> to_recover;
+        {
+            std::shared_lock<std::shared_mutex> lock(Docker_scheduler::getDeviceMutex());
+            auto &device_status = Docker_scheduler::getDeviceStatus();
+            const auto now = Clock::now();
+
+            for (const auto &[dev_id, status] : device_status) {
+                const double latency_sec = status.net_latency / 1000.0; // agent reports ms
+                if (latency_sec <= HEALTH_CHECK_LATENCY_THRESHOLD) {
+                    continue;
+                }
+
+                const auto it = last_recover.find(dev_id);
+                if (it != last_recover.end()) {
+                    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count();
+                    if (elapsed < HEALTH_CHECK_COOLDOWN_SEC) {
+                        continue;
+                    }
+                }
+
+                last_recover[dev_id] = now;
+                to_recover.push_back(dev_id);
+            }
+        }
+
+        for (const auto &dev_id : to_recover) {
+            spdlog::warn("HealthCheck: latency > {}s, trigger service migration (recover running tasks), device_id={}",
+                         HEALTH_CHECK_LATENCY_THRESHOLD, boost::uuids::to_string(dev_id));
+            Docker_scheduler::GetTaskQueueManager().RecoverTasks(dev_id);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(HEALTH_CHECK_INTERVAL));
     }
 }

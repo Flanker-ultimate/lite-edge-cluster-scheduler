@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import atexit
 import json
 import os
-import shlex
-import signal
-import subprocess
 import threading
 import time
+import http.client
 from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, jsonify, request
@@ -21,34 +18,17 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../.."))
 
 # 使用简洁的路径结构
 WORKSPACE_DIR = os.path.join(PROJECT_ROOT, "workspace", "slave")
-IMG_ROOT = os.path.join(WORKSPACE_DIR, "data", "input")
-YOLO_OUTPUT_DIR = os.path.join(WORKSPACE_DIR, "data", "output")
+DATA_ROOT = os.path.join(WORKSPACE_DIR, "data")
 LOG_DIR = os.path.join(WORKSPACE_DIR, "log")
 
-# YOLO 脚本路径（直接在 src/modules/slave 下）
-YOLO_SCRIPT_PATH = os.path.join(
-    PROJECT_ROOT, "src", "modules", "slave", "yolov5-ascend", "detect_yolov5_ascend.py"
-)
-
-# 日志文件
-YOLO_LOG = os.path.join(LOG_DIR, "yolo_inference.log")
 COUNT_LOG_FILE = os.path.join(LOG_DIR, "receive_stats.log")
-
-# 默认 YOLO 命令（使用简洁路径）
-DEFAULT_YOLO_CMD = (
-    f"python3 {YOLO_SCRIPT_PATH} "
-    f"--input-dir {IMG_ROOT} "
-    f"--output-dir {YOLO_OUTPUT_DIR} "
-    f"--output-format all"
-)
-YOLO_CMD = DEFAULT_YOLO_CMD
 
 # 其他配置
 AGENT_PORT = 20810
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
 # 创建必要的目录
-for path in [IMG_ROOT, YOLO_OUTPUT_DIR, LOG_DIR]:
+for path in [DATA_ROOT, LOG_DIR]:
     os.makedirs(path, exist_ok=True)
 
 EXECUTOR = ThreadPoolExecutor(max_workers=4)
@@ -68,7 +48,8 @@ def build_success(result):
 
 def build_failed(error):
     payload = {"error": error} if isinstance(error, str) else error
-    return jsonify({"status": "failed", "result": payload}), 200
+    # 返回非 200，便于 master 端（scheduler）识别失败并重试/换节点
+    return jsonify({"status": "failed", "result": payload}), 500
 
 
 @app.errorhandler(Exception)
@@ -79,6 +60,79 @@ def on_exception(e):
 # ===== 工具函数 =====
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
+
+
+def _agent_port() -> int:
+    try:
+        return int(os.environ.get("AGENT_CONTROL_PORT", "8000"))
+    except Exception:
+        return 8000
+
+
+def _normalize_tasktype(raw) -> str:
+    if not isinstance(raw, str):
+        return "Unknown"
+    s = raw.strip()
+    if not s:
+        return "Unknown"
+    # 前提：tasktype == service name，完全一致（大小写也一致）
+    return s
+
+
+def _load_slave_backend_config(project_root: str) -> dict:
+    cfg_env = os.environ.get("SLAVE_BACKEND_CONFIG", "").strip()
+    cfg_path = cfg_env or os.path.join(project_root, "config_files", "slave_backend.json")
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _resolve_path(project_root: str, p: str) -> str:
+    if not isinstance(p, str) or not p.strip():
+        return ""
+    if os.path.isabs(p):
+        return p
+    return os.path.abspath(os.path.join(project_root, p))
+
+
+def _get_default_service(cfg: dict) -> str:
+    v = cfg.get("default_service")
+    return v if isinstance(v, str) and v.strip() else "Unknown"
+
+
+def _get_service_entry(cfg: dict, service_name: str) -> dict:
+    services = cfg.get("services")
+    if isinstance(services, dict):
+        v = services.get(service_name)
+        if isinstance(v, dict):
+            return v
+    return {}
+
+
+def _ensure_backend_via_agent(service_name: str, timeout_sec: int = 3) -> None:
+    """
+    由 agent 负责启动/守护后端（binary/container）。
+    recv_server 仅负责接收任务并落盘；按需时调用 agent:POST /ensure_service。
+    """
+    conn = http.client.HTTPConnection("127.0.0.1", _agent_port(), timeout=timeout_sec)
+    try:
+        body = json.dumps({"service": service_name})
+        conn.request("POST", "/ensure_service", body=body, headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        raw = resp.read()
+        if resp.status >= 300:
+            raise RuntimeError(f"agent ensure_service http {resp.status}: {raw[:200]!r}")
+        try:
+            payload = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict) and payload.get("status") not in (None, "success"):
+            raise RuntimeError(f"agent ensure_service failed: {payload}")
+    finally:
+        conn.close()
 
 
 def save_bytes_to_file(tmp_path: str, final_path: str, data: bytes) -> int:
@@ -144,6 +198,7 @@ def srv():
     # 3) 取 ip 与 file_name（task_type 暂不使用）
     src_ip = meta.get("ip")
     file_name = meta.get("file_name")
+    tasktype = _normalize_tasktype(meta.get("tasktype", "Unknown"))
     if not isinstance(src_ip, str) or not src_ip.strip():
         return build_failed("meta.ip required")
     if not isinstance(file_name, str) or not file_name.strip():
@@ -153,13 +208,35 @@ def srv():
     if ext not in ALLOWED_EXTS:
         return build_failed("only jpg/jpeg/png/tif/tiff allowed")
 
-    # 4) 目标路径
-    dir_path = os.path.join(IMG_ROOT, src_ip)
+    # 4) 读取文件到内存（落盘在线程池执行）
+    data = file_storage.stream.read()
+
+    # 5) service 选择：使用 tasktype 作为服务名；缺省时走 default_service
+    cfg = _load_slave_backend_config(PROJECT_ROOT)
+    service_name = tasktype if tasktype and tasktype != "Unknown" else _get_default_service(cfg)
+    if not service_name or service_name == "Unknown":
+        service_name = "Unknown"
+
+    entry = _get_service_entry(cfg, service_name)
+    if not entry:
+        entry = {"backend": "local"}
+
+    # 6) 确保后端已启动：统一由 agent 管理（binary/container）
+    try:
+        if entry.get("backend") in ("binary", "container"):
+            _ensure_backend_via_agent(service_name)
+    except Exception as e:
+        return build_failed(f"start backend failed: {e}")
+
+    # 7) 落盘到：<input_dir>/<client_ip>/<file_name>
+    input_root = _resolve_path(PROJECT_ROOT, entry.get("input_dir", f"workspace/slave/data/input/{service_name}"))
+    if not input_root:
+        input_root = os.path.join(DATA_ROOT, service_name, "input")
+    dir_path = os.path.join(input_root, src_ip)
     final_path = os.path.join(dir_path, os.path.basename(file_name))
     tmp_path = final_path + ".part"
 
-    # 5) 读取文件到内存（简化 demo），把写盘工作交给线程池并等待完成
-    data = file_storage.stream.read()
+    # 8) 写盘（线程池执行，避免阻塞 Flask worker）
     future = EXECUTOR.submit(save_bytes_to_file, tmp_path, final_path, data)
     try:
         size_bytes = future.result()  # 等待写盘完成后再返回
@@ -172,60 +249,19 @@ def srv():
         data = None  # 清除引用，让GC可以回收
 
     return build_success(
-        {"saved_path": final_path, "from_ip": src_ip, "size_bytes": size_bytes}
+        {
+            "service": service_name,
+            "saved_path": final_path,
+            "from_ip": src_ip,
+            "tasktype": tasktype,
+            "size_bytes": size_bytes,
+        }
     )
 
 
-_yolo_proc = None
-
-
-def start_yolo():
-    global _yolo_proc
-    if not YOLO_CMD.strip():
-        print("[YOLO] YOLO_CMD is empty, skip start (demo)")
-        return False
-    try:
-        log_dir = os.path.dirname(YOLO_LOG) or "."
-        ensure_dir(log_dir)
-
-        logf = open(YOLO_LOG, "w", buffering=1, encoding="utf-8")
-        env = os.environ.copy()
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        cmd = shlex.split(YOLO_CMD)
-        _yolo_proc = subprocess.Popen(
-            cmd,
-            stdout=logf,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-            env=env,
-        )
-        print(
-            f"[YOLO] started: pid={_yolo_proc.pid}, cmd={' '.join(cmd)}, log={YOLO_LOG}"
-        )
-        return True
-    except Exception as e:
-        print(f"[YOLO] start failed: {e}")
-        return False
-
-
-def stop_yolo():
-    global _yolo_proc
-    if _yolo_proc and _yolo_proc.poll() is None:
-        print(f"[YOLO] stopping pid={_yolo_proc.pid}")
-        try:
-            os.killpg(os.getpgid(_yolo_proc.pid), signal.SIGTERM)
-        except Exception as e:
-            print(f"[YOLO] stop failed: {e}")
-
-
 if __name__ == "__main__":
-    atexit.register(stop_yolo)
-
-    start_yolo()
-    print(f"[Agent] listening on 0.0.0.0:{AGENT_PORT}")
-    print(f"  Input images: {IMG_ROOT}")
-    print(f"  Output results: {YOLO_OUTPUT_DIR}")
+    print(f"[recv_server] listening on 0.0.0.0:{AGENT_PORT}")
+    print("  Storage: use config_files/slave_backend.json services.<ServiceName>.{input_dir,output_dir,result_dir}")
     print(f"  Logs: {LOG_DIR}")
     
     # Flask 自身也开线程；我们的落盘再用 4 线程池，二者叠加可应对高并发 demo

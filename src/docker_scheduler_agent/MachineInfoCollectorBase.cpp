@@ -6,9 +6,13 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#ifdef _WIN32
+#include <cstdlib>
+#else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <netdb.h>
+#endif
 
 const char *kConfigFilePath = ".agent_config.json";
 
@@ -21,6 +25,10 @@ double MachineInfoCollectorBase::GetCpuUsage() {
 }
 
 double MachineInfoCollectorBase::GetMemoryUsage() {
+#ifdef _WIN32
+    // Windows: not implemented; return 0 for now
+    return 0.0;
+#else
     std::ifstream memFile("/proc/meminfo");
     if (!memFile.is_open()) {
         throw std::runtime_error("Failed to open /proc/meminfo");
@@ -58,6 +66,7 @@ double MachineInfoCollectorBase::GetMemoryUsage() {
 
     // 计算内存使用率（0.0~1.0）：1 - 可用内存/总内存
     return 1.0 - static_cast<double>(availableMem) / totalMem;
+#endif
 }
 
 double MachineInfoCollectorBase::GetNetLatency() {
@@ -101,6 +110,13 @@ void MachineInfoCollectorBase::CollectThread() {
 }
 
 void MachineInfoCollectorBase::CollectCpuUsage() {
+#ifdef _WIN32
+    // Windows: not implemented; keep CPU usage at 0
+    std::lock_guard lock(collectorMutex);
+    cpuUsageQueue.pop_front();
+    cpuUsageQueue.push_back(0.0);
+    return;
+#else
     CpuUsageInfo cpuUsage{};
 
     std::ifstream file("/proc/stat");
@@ -135,6 +151,7 @@ void MachineInfoCollectorBase::CollectCpuUsage() {
             cpuUsageQueue.push_back(usage);
         }
     }
+#endif
 }
 
 void MachineInfoCollectorBase::CollectNetLatency() {
@@ -168,6 +185,10 @@ void MachineInfoCollectorBase::CollectNetBandwidth() {
 }
 
 std::string MachineInfoCollectorBase::GetIp() {
+#ifdef _WIN32
+    // Windows: return loopback for local development
+    return "127.0.0.1";
+#else
     struct ifaddrs *ifaddr, *ifa;
     char host[NI_MAXHOST];
 
@@ -198,10 +219,15 @@ std::string MachineInfoCollectorBase::GetIp() {
     }
 
     return ip;
+#endif
 }
 
 std::string MachineInfoCollectorBase::GetGlobalId() {
+#ifdef _WIN32
+    const char *homeDir = getenv("USERPROFILE");
+#else
     const char *homeDir = getenv("HOME");
+#endif
     if (homeDir == nullptr) {
         throw std::runtime_error("Could not find home directory.");
     }

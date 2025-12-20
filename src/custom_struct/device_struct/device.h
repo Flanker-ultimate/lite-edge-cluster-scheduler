@@ -94,6 +94,7 @@ struct Device{
     DeviceID global_id;
     std::string ip_address;
     int agent_port;
+    std::vector<TaskType> services; // services running on this node (optional, reported by agent)
     void show() {
         std::string ty;
         switch (type)
@@ -115,6 +116,14 @@ struct Device{
             break;
         }
         spdlog::info("Dev_id: {}\tdev type:{}\tip:{}\tagent port:{}", boost::uuids::to_string(global_id), ty, ip_address, agent_port);
+        if (!services.empty()) {
+            std::string svc_str;
+            for (size_t i = 0; i < services.size(); ++i) {
+                if (i) svc_str += ",";
+                svc_str += to_string(nlohmann::json(services[i]));
+            }
+            spdlog::info("Services: {}", svc_str);
+        }
     };
     void parseJson(const nlohmann::json& j) {
         try {
@@ -124,6 +133,14 @@ struct Device{
             global_id = gen(id_str); // 从字符串生成 UUID
             j.at("ip_address").get_to(ip_address);
             j.at("agent_port").get_to(agent_port);
+            services.clear();
+            if (j.contains("services") && j.at("services").is_array()) {
+                for (const auto &v : j.at("services")) {
+                    if (v.is_string()) {
+                        services.push_back(StrToTaskType(v.get<std::string>()));
+                    }
+                }
+            }
         } catch (const nlohmann::json::exception& e) {
             spdlog::error("Error parsing JSON in Device::parseJson: {}", e.what());
         }

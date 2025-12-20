@@ -77,6 +77,7 @@ public:
     std::optional<ImageTask> PopPending();
     void RecoverTasks(const DeviceID &device_id);
     bool AddRunningTask(const DeviceID &device_id, const ImageTask &task);
+    std::optional<ImageTask> CompleteTaskAndGet(const std::string &reported_task_id);
     bool CompleteTask(const std::string &task_id);
     void MoveToFailed(const ImageTask &task);
 
@@ -96,6 +97,7 @@ private:
     static std::map<DeviceID, Device> device_static_info; // static device info
 
     static std::map<DeviceID, DeviceStatus> device_status; // dynamic device info
+    static std::map<DeviceID, std::vector<TaskType>> device_active_services; // services reported by agent (optional)
 
     // static std::shared_mutex td_map_mutex_; // Thread-safe mutex for TDMap
     static std::map<TaskType, std::map<DeviceID, DevSrvInfos> > tdMap;

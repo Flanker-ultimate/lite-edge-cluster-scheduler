@@ -1,0 +1,13 @@
+{
+  "services": {
+    "YoloV5": {
+      "backend": "binary",
+      "agent_autostart": true,
+      "input_dir": "workspace/slave/data/YoloV5/input",
+      "output_dir": "workspace/slave/data/YoloV5/output",
+      "result_dir": "workspace/slave/data/YoloV5/output/label",
+      "start_cmd": "python3 src/modules/slave/yolov5-ascend/detect_yolov5_ascend.py --input-dir ${INPUT_DIR} --output-dir ${OUTPUT_DIR} --output-format all"
+    }
+  },
+  "default_service": "YoloV5"
+}

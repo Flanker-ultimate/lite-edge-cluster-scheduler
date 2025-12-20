@@ -8,6 +8,8 @@
 #include <limits>
 #include <stdexcept>
 #include <sstream>
+#include <filesystem>
+#include <algorithm>
 std::map<TaskType, std::map<DeviceType, StaticInfoItem> > Docker_scheduler::static_info; // static task info
 TaskQueueManager Docker_scheduler::task_queue_manager_;
 
@@ -15,6 +17,7 @@ std::shared_mutex Docker_scheduler::devs_mutex; //
 std::map<DeviceID, Device> Docker_scheduler::device_static_info; // static device info
 
 std::map<DeviceID, DeviceStatus> Docker_scheduler::device_status; // dynamic device info
+std::map<DeviceID, std::vector<TaskType>> Docker_scheduler::device_active_services;
 
 // std::shared_mutex Docker_scheduler::td_map_mutex_; // Thread-safe mutex for TDMap
 std::map<TaskType, std::map<DeviceID, DevSrvInfos> > Docker_scheduler::tdMap;
@@ -52,18 +55,31 @@ bool TaskQueueManager::AddRunningTask(const DeviceID &device_id, const ImageTask
     return true;
 }
 
-bool TaskQueueManager::CompleteTask(const std::string &task_id) {
+std::optional<ImageTask> TaskQueueManager::CompleteTaskAndGet(const std::string &reported_task_id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (auto &entry : running_index_) {
-        auto &task_list = entry.second;
+
+    const std::filesystem::path reported_path(reported_task_id);
+    const std::string reported_stem = reported_path.stem().string();
+
+    for (auto map_it = running_index_.begin(); map_it != running_index_.end(); ++map_it) {
+        auto &task_list = map_it->second;
         for (auto it = task_list.begin(); it != task_list.end(); ++it) {
-            if (it->task_id == task_id) {
+            const std::filesystem::path running_path(it->task_id);
+            const bool id_match = (it->task_id == reported_task_id);
+            const bool stem_match = (!reported_stem.empty() && running_path.stem().string() == reported_stem);
+            if (id_match || stem_match) {
+                ImageTask completed = *it;
                 task_list.erase(it);
-                return true;
+                return completed;
             }
         }
     }
-    return false;
+
+    return std::nullopt;
+}
+
+bool TaskQueueManager::CompleteTask(const std::string &task_id) {
+    return CompleteTaskAndGet(task_id).has_value();
 }
 
 void TaskQueueManager::RecoverTasks(const DeviceID &device_id) {
@@ -269,6 +285,7 @@ int Docker_scheduler::RegisNode(const Device &device) {
     device_static_info[device.global_id] = device;
     // update dev_status
     device_status[device.global_id] = DeviceStatus();
+    device_active_services[device.global_id] = device.services;
 
     // update Tdmap all tasktype add new device
     // according to task_static_info, match supported tasktype and device
@@ -344,6 +361,7 @@ void Docker_scheduler::RemoveDevice(DeviceID global_id) {
         auto it = tdMap[ttype].find(global_id);
         tdMap[ttype].erase(it);
     }
+    device_active_services.erase(global_id);
 }
 
 bool Docker_scheduler::HotStartAllNodeByTType(TaskType ttype) {
@@ -393,6 +411,23 @@ void Docker_scheduler::startDeviceInfoCollection() {
                             if (it != device_status.end()) {
                                 it->second = status;  // 更新已有设备的状态
                             }
+
+                            // agent 可选上报当前已启动的服务列表（用于 scheduler 优先选择已启动服务的节点）
+                            try {
+                                if (j.contains("result") && j["result"].is_object() &&
+                                    j["result"].contains("services") && j["result"]["services"].is_array()) {
+                                    std::vector<TaskType> running;
+                                    for (const auto &sv : j["result"]["services"]) {
+                                        if (!sv.is_string()) continue;
+                                        TaskType tt = StrToTaskType(sv.get<std::string>());
+                                        if (tt != TaskType::Unknown) {
+                                            running.push_back(tt);
+                                        }
+                                    }
+                                    device_active_services[k] = running;
+                                }
+                            } catch (...) {
+                            }
                         } else {
                             spdlog::error("Failed to get device info, dev.ip_address:{}, dev.agent_port:{}",
                                           dev.ip_address, dev.agent_port);
@@ -430,7 +465,7 @@ void Docker_scheduler::startDeviceInfoCollection() {
 
 // CallBack Function to delete inactive contianer
 void Docker_scheduler::inactiveTimeCallback(TaskType ttype, Device dev, string container_id) {
-    sleep(2); // sleep to wait questing toi finish to avoid the current quest failed
+    std::this_thread::sleep_for(std::chrono::seconds(2)); // sleep to wait questing toi finish to avoid the current quest failed
     string docker_version = GetDockerVersion(dev);
     DockerClient docker_client(dev.ip_address, 2375, docker_version);
     bool delete_volume = false;
@@ -658,9 +693,32 @@ Device Docker_scheduler::Schedule(TaskType Ttype) {
     std::vector<DeviceID> device_ids;
     {
         std::shared_lock<std::shared_mutex> lock(devs_mutex);
-        device_ids.reserve(device_status.size());
-        for (const auto& [device_id, _] : device_status) {
-            device_ids.push_back(device_id);
+        if (Ttype != TaskType::Unknown) {
+            for (const auto& [device_id, services] : device_active_services) {
+                if (device_status.find(device_id) == device_status.end()) {
+                    continue;
+                }
+                if (std::find(services.begin(), services.end(), Ttype) != services.end()) {
+                    device_ids.push_back(device_id);
+                }
+            }
+            if (device_ids.empty()) {
+                auto it = tdMap.find(Ttype);
+                if (it != tdMap.end()) {
+                    device_ids.reserve(it->second.size());
+                    for (const auto& [device_id, _] : it->second) {
+                        if (device_status.find(device_id) != device_status.end()) {
+                            device_ids.push_back(device_id);
+                        }
+                    }
+                }
+            }
+        }
+        if (device_ids.empty()) {
+            device_ids.reserve(device_status.size());
+            for (const auto& [device_id, _] : device_status) {
+                device_ids.push_back(device_id);
+            }
         }
     }
 
@@ -856,9 +914,32 @@ Device Docker_scheduler::RoundRobin_Schedule(TaskType Ttype) {
 
     //  获取设备 ID 列表
     std::vector<DeviceID> ids;
-    ids.reserve(device_status.size());
-    for (const auto& [device_id, _] : device_status) {
-        ids.push_back(device_id);
+    if (Ttype != TaskType::Unknown) {
+        for (const auto& [device_id, services] : device_active_services) {
+            if (device_status.find(device_id) == device_status.end()) {
+                continue;
+            }
+            if (std::find(services.begin(), services.end(), Ttype) != services.end()) {
+                ids.push_back(device_id);
+            }
+        }
+        if (ids.empty()) {
+            auto it = tdMap.find(Ttype);
+            if (it != tdMap.end()) {
+                ids.reserve(it->second.size());
+                for (const auto& [device_id, _] : it->second) {
+                    if (device_status.find(device_id) != device_status.end()) {
+                        ids.push_back(device_id);
+                    }
+                }
+            }
+        }
+    }
+    if (ids.empty()) {
+        ids.reserve(device_status.size());
+        for (const auto& [device_id, _] : device_status) {
+            ids.push_back(device_id);
+        }
     }
 
     //  取当前索引对应的设备

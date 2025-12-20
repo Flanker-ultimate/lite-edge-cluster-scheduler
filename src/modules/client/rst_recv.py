@@ -50,6 +50,17 @@ class FileReceiverHandler(BaseHTTPRequestHandler):
                 headers=self.headers,
                 environ={'REQUEST_METHOD': 'POST'}
             )
+
+            service = ""
+            try:
+                service = form.getfirst("service", "") or ""
+            except Exception:
+                service = ""
+            service = service.strip()
+            if "/" in service or "\\" in service:
+                service = os.path.basename(service)
+            if service in (".", ".."):
+                service = ""
             
             if 'file' not in form:
                 self.send_error(400, "需要文件字段'file'")
@@ -62,7 +73,11 @@ class FileReceiverHandler(BaseHTTPRequestHandler):
                 
             # 保持原始文件名
             filename = os.path.basename(file_item.filename)
-            save_path = os.path.join(self.storage_dir, filename)
+            save_dir = self.storage_dir
+            if service:
+                save_dir = os.path.join(self.storage_dir, service)
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, filename)
             
             # 如果文件已存在则覆盖
             with open(save_path, 'wb') as f:
