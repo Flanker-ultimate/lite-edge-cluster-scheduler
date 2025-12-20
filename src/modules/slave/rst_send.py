@@ -31,23 +31,14 @@ from typing import List, Tuple
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../../"))
 
-# 定义与 recv_server.py 一致的数据目录
-DATA_DIR = os.environ.get("DATA_DIR", os.path.join(PROJECT_ROOT, "data"))
+# 默认扫描根目录（多 service 模式下主要由 --config 决定 result_dir）
+DEFAULT_INPUT_DIR = os.path.join(PROJECT_ROOT, "workspace", "slave", "data")
 
-# 默认监控目录：data/inference_results/label
-# 注意：YOLO 输出通常会自动创建 'label' 子目录，所以这里指向那个子目录
-DEFAULT_INPUT_DIR = os.path.join(DATA_DIR, "inference_results", "label")
-
-# Gateway配置（用于任务完成通知）
-DEFAULT_GATEWAY_HOST = os.environ.get("GATEWAY_HOST", "127.0.0.1")
-try:
-    DEFAULT_GATEWAY_PORT = int(os.environ.get("GATEWAY_PORT", "6666"))
-except Exception:
-    DEFAULT_GATEWAY_PORT = 6666
-DEFAULT_DEVICE_ID = os.environ.get("DEVICE_ID", "unknown")
-DEFAULT_SLAVE_BACKEND_CONFIG = os.environ.get(
-    "SLAVE_BACKEND_CONFIG", os.path.join(PROJECT_ROOT, "config_files", "slave_backend.json")
-)
+# 默认配置（仅默认值；建议由命令行显式传入）
+DEFAULT_GATEWAY_HOST = "127.0.0.1"
+DEFAULT_GATEWAY_PORT = 6666
+DEFAULT_DEVICE_ID = "unknown"
+DEFAULT_SLAVE_BACKEND_CONFIG = os.path.join(PROJECT_ROOT, "config_files", "slave_backend.json")
 
 
 class StrictIPSender:

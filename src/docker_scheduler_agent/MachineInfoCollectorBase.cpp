@@ -223,17 +223,8 @@ std::string MachineInfoCollectorBase::GetIp() {
 }
 
 std::string MachineInfoCollectorBase::GetGlobalId() {
-#ifdef _WIN32
-    const char *homeDir = getenv("USERPROFILE");
-#else
-    const char *homeDir = getenv("HOME");
-#endif
-    if (homeDir == nullptr) {
-        throw std::runtime_error("Could not find home directory.");
-    }
-    std::string configFilePath(homeDir);
-    configFilePath += "/";
-    configFilePath += kConfigFilePath;
+    // Do not rely on environment variables; store the ID in current working directory.
+    std::string configFilePath = std::string(kConfigFilePath);
 
     nlohmann::json jsonData;
     std::ifstream file(configFilePath);

@@ -122,7 +122,7 @@ python3 ./src/modules/master/task_manager.py \
 ```
 agent 默认会在注册成功后启动并守护 `slave-recv_server` 与 `slave-rst_sender`。
 - 可通过 `--no-manage-services` 关闭（此时需手动启动 `recv_server.py`/`rst_send.py`）。
-- 启动命令可通过 `config_files/agent_services.json` 配置，或设置 `AGENT_SERVICES_CONFIG` 指向自定义路径（会替换 `{DEVICE_ID}`/`{MASTER_IP}`/`{MASTER_PORT}`/`{PYTHON}`）。
+- 启动命令通过 `config_files/agent_services.json` 配置（会替换 `{DEVICE_ID}`/`{MASTER_IP}`/`{MASTER_PORT}`/`{PYTHON}`）。
 - agent 会将 `agent_services.json` 中的 `autostart_services` 上报给 master，用于让 scheduler 优先调度到“已启动对应服务”的节点。
 **参数说明：**
 - `--bandwidth-fluctuate`: 启用网络带宽波动模拟
@@ -134,6 +134,10 @@ agent 默认会在注册成功后启动并守护 `slave-recv_server` 与 `slave-
 python3 src/modules/slave/recv_server.py --config config_files/slave_backend.json
 ```
 说明：默认不需要手动启动（由 Agent 负责启动/守护）。只有在你使用 `--no-manage-services` 关闭 Agent 管理时才需要执行本步骤。
+
+**参数说明：**
+- `--config`：`slave_backend.json` 路径（默认读取 `config_files/slave_backend.json`）
+- `--agent-port`：agent 控制端口（用于 `POST /ensure_service`，默认 8000）
 
 recv_server 会读取 `config_files/slave_backend.json`，按服务(tasktype)落盘到 `input_dir/<ip>/...`；后端（binary/container）的启动/守护统一由 agent 负责。
 前提：`tasktype` 与 `service` 名字完全一致（大小写也一致），即“一个 tasktype 对应唯一一个 service”。
@@ -171,6 +175,15 @@ python3 ./src/modules/slave/rst_send.py \
     --device-id slave-1
 ```
 说明：默认不需要手动启动（由 Agent 负责启动/守护）。只有在你使用 `--no-manage-services` 关闭 Agent 管理时才需要执行本步骤。
+
+**参数说明：**
+- `--config`：`slave_backend.json` 路径（用于读取各 service 的 `result_dir`，并在回传时携带 `service` 字段）
+- `--service`：只发送指定 service 的结果（例如 `--service YoloV5`），不传则发送全部 service
+- `--input-dir`：兼容单目录模式的扫描根目录（当 `--config` 不可用/未配置 services 时，按 `<input-dir>/<client_ip>/...` 扫描）
+- `--interval/-t`：扫描间隔（秒）
+- `--target-port/-p`：client 侧 `rst_recv` 监听端口（默认 8888）
+- `--gateway-host/--gateway-port`：master-gateway 地址（用于 `POST /task_completed` 通知）
+- `--device-id`：上报给 gateway 的节点 ID（通常由 agent 注入 `{DEVICE_ID}`）
 
 ### 6️⃣ 启动客户端接收器（Client Receiver）
 ```bash

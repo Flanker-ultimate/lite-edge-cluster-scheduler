@@ -177,7 +177,8 @@ void Docker_scheduler::SchedulerLoop() {
         nlohmann::json meta_json;
         meta_json["ip"] = task.client_ip;
         meta_json["file_name"] = task.task_id;
-        meta_json["tasktype"] = task.task_type == TaskType::Unknown ? "Unknown" : to_string(nlohmann::json(task.task_type));
+        // Avoid JSON string being serialized with quotes like "\"YoloV5\""
+        meta_json["tasktype"] = task.task_type == TaskType::Unknown ? "Unknown" : nlohmann::json(task.task_type);
         std::string meta_str = meta_json.dump();
 
         try {

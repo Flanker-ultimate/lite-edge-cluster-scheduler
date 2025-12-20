@@ -42,6 +42,7 @@ RECV_LOG_INTERVAL = 500  # 每收到 500 张记录一次时间戳
 app = Flask(__name__)
 
 _SLAVE_BACKEND_CONFIG_PATH = ""
+_AGENT_CONTROL_PORT = 8000
 
 
 # ===== 统一返回（失败也返回 200） =====
@@ -66,10 +67,7 @@ def ensure_dir(path: str):
 
 
 def _agent_port() -> int:
-    try:
-        return int(os.environ.get("AGENT_CONTROL_PORT", "8000"))
-    except Exception:
-        return 8000
+    return int(_AGENT_CONTROL_PORT)
 
 
 def _normalize_tasktype(raw) -> str:
@@ -79,14 +77,16 @@ def _normalize_tasktype(raw) -> str:
     if not s:
         return "Unknown"
     # 前提：tasktype == service name，完全一致（大小写也一致）
+    # 兼容：避免上游把 JSON 字符串序列化成 "\"YoloV5\"" 这种带引号的形式
+    if len(s) >= 2 and ((s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'")):
+        s = s[1:-1].strip()
     return s
 
 
 def _load_slave_backend_config(project_root: str) -> dict:
     cfg_path = (_SLAVE_BACKEND_CONFIG_PATH or "").strip()
     if not cfg_path:
-        cfg_env = os.environ.get("SLAVE_BACKEND_CONFIG", "").strip()
-        cfg_path = cfg_env or os.path.join(project_root, "config_files", "slave_backend.json")
+        cfg_path = os.path.join(project_root, "config_files", "slave_backend.json")
     try:
         with open(cfg_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -268,14 +268,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Slave recv_server: receive tasks and persist to service input dir")
     parser.add_argument(
         "--config",
-        default=os.environ.get("SLAVE_BACKEND_CONFIG", os.path.join(PROJECT_ROOT, "config_files", "slave_backend.json")),
-        help="path to slave_backend.json (default: env SLAVE_BACKEND_CONFIG or config_files/slave_backend.json)",
+        default=os.path.join(PROJECT_ROOT, "config_files", "slave_backend.json"),
+        help="path to slave_backend.json (default: config_files/slave_backend.json)",
+    )
+    parser.add_argument(
+        "--agent-port",
+        type=int,
+        default=8000,
+        help="agent control port for POST /ensure_service (default: 8000)",
     )
     args = parser.parse_args()
 
     _SLAVE_BACKEND_CONFIG_PATH = os.path.abspath(args.config) if args.config else ""
-    if _SLAVE_BACKEND_CONFIG_PATH:
-        os.environ["SLAVE_BACKEND_CONFIG"] = _SLAVE_BACKEND_CONFIG_PATH
+    _AGENT_CONTROL_PORT = int(args.agent_port)
 
     print(f"[recv_server] listening on 0.0.0.0:{AGENT_PORT}")
     print("  Storage: use config_files/slave_backend.json services.<ServiceName>.{input_dir,output_dir,result_dir}")

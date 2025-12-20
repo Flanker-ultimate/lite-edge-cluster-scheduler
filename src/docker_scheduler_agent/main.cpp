@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <csignal>
+#include <cctype>
 
 // 将 const char* 硬编码改为全局变量
 // 默认值设为 127.0.0.1，方便本地测试。生产环境建议通过参数覆盖。
@@ -45,6 +46,8 @@ static int g_restart_delay_sec = 2;
 static std::string g_project_root = ".";
 static bool g_allow_remote_control = false;
 static std::string g_slave_log_dir = "workspace/slave/log";
+static std::string g_agent_services_config_path = "config_files/agent_services.json";
+static std::string g_slave_backend_config_path = "config_files/slave_backend.json";
 
 // 进程生命周期：agent 退出时需要关闭 recv_server/rst_send/后端进程
 static std::mutex g_proc_mu;
@@ -222,10 +225,9 @@ static std::string ReplaceAll(std::string s, const std::string &from, const std:
 }
 
 static json LoadAgentServicesConfig() {
-    const char *cfg_env = std::getenv("AGENT_SERVICES_CONFIG");
-    const std::string cfg_path = (cfg_env && *cfg_env) ? cfg_env : "config_files/agent_services.json";
-    std::ifstream f(cfg_path);
+    std::ifstream f(g_agent_services_config_path);
     if (!f.is_open()) {
+        spdlog::warn("[agent] failed to open agent services config: {}", g_agent_services_config_path);
         return json::object();
     }
     try {
@@ -318,12 +320,32 @@ static void SetupAgentLogging() {
     }
 }
 
+static std::string NormalizeServiceName(std::string s) {
+    // trim
+    auto not_space = [](unsigned char c) { return !std::isspace(c); };
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+    s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+
+    // unwrap one pair of quotes if present (fix "\"YoloV5\"" etc.)
+    if (s.size() >= 2) {
+        if ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')) {
+            s = s.substr(1, s.size() - 2);
+        }
+    }
+
+    // prevent path traversal / invalid folder names
+    while (!s.empty() && (s.front() == '.' || s.front() == '/' || s.front() == '\\')) {
+        s.erase(s.begin());
+    }
+    s.erase(std::remove(s.begin(), s.end(), '/'), s.end());
+    s.erase(std::remove(s.begin(), s.end(), '\\'), s.end());
+    return s;
+}
+
 static json LoadSlaveBackendConfig() {
-    const char *cfg_env = std::getenv("SLAVE_BACKEND_CONFIG");
-    std::string cfg_path = (cfg_env && *cfg_env) ? cfg_env : (std::filesystem::path(g_project_root) / "config_files" / "slave_backend.json").string();
-    std::ifstream f(cfg_path);
+    std::ifstream f(g_slave_backend_config_path);
     if (!f.is_open()) {
-        spdlog::warn("[agent] failed to open slave backend config: {}", cfg_path);
+        spdlog::warn("[agent] failed to open slave backend config: {}", g_slave_backend_config_path);
         return json::object();
     }
     try {
@@ -353,9 +375,7 @@ static std::vector<std::string> GetAgentAutostartFromSlaveBackend(const json &cf
 }
 
 static std::string DetectSlaveBackendConfigPath() {
-    const char *cfg_env = std::getenv("SLAVE_BACKEND_CONFIG");
-    std::string cfg_path = (cfg_env && *cfg_env) ? cfg_env : (std::filesystem::path(g_project_root) / "config_files" / "slave_backend.json").string();
-    return cfg_path;
+    return g_slave_backend_config_path;
 }
 
 static std::vector<std::string> UniqueUnion(std::vector<std::string> a, const std::vector<std::string> &b) {
@@ -376,14 +396,19 @@ static json GetServiceEntry(const json &cfg, const std::string &service) {
 }
 
 static bool EnsureBackendStarted(const std::string &service_name) {
+    const std::string normalized_service = NormalizeServiceName(service_name);
+    if (normalized_service.empty()) {
+        spdlog::warn("[agent] ensure_service: empty/invalid service name");
+        return false;
+    }
     std::lock_guard<std::mutex> lock(g_backend_mu);
-    if (g_running_backends.find(service_name) != g_running_backends.end()) {
+    if (g_running_backends.find(normalized_service) != g_running_backends.end()) {
         return true;
     }
 
-    json entry = GetServiceEntry(g_slave_backend_cfg, service_name);
+    json entry = GetServiceEntry(g_slave_backend_cfg, normalized_service);
     if (!entry.is_object()) {
-        spdlog::warn("[agent] ensure_service: unknown service={}", service_name);
+        spdlog::warn("[agent] ensure_service: unknown service={}", normalized_service);
         return false;
     }
 
@@ -400,7 +425,7 @@ static bool EnsureBackendStarted(const std::string &service_name) {
         start_cmd = entry["start_cmd"].get<std::string>();
     }
     if (start_cmd.empty()) {
-        spdlog::warn("[agent] ensure_service: missing start_cmd, service={} backend={}", service_name, backend);
+        spdlog::warn("[agent] ensure_service: missing start_cmd, service={} backend={}", normalized_service, backend);
         return false;
     }
 
@@ -408,6 +433,12 @@ static bool EnsureBackendStarted(const std::string &service_name) {
     std::string output_dir = "workspace/slave/data/output/" + service_name;
     if (entry.contains("input_dir") && entry["input_dir"].is_string()) input_dir = entry["input_dir"].get<std::string>();
     if (entry.contains("output_dir") && entry["output_dir"].is_string()) output_dir = entry["output_dir"].get<std::string>();
+    if (!entry.contains("input_dir") || !entry["input_dir"].is_string()) {
+        input_dir = "workspace/slave/data/" + normalized_service + "/input";
+    }
+    if (!entry.contains("output_dir") || !entry["output_dir"].is_string()) {
+        output_dir = "workspace/slave/data/" + normalized_service + "/output";
+    }
 
     input_dir = ResolvePath(g_project_root, input_dir);
     output_dir = ResolvePath(g_project_root, output_dir);
@@ -420,17 +451,12 @@ static bool EnsureBackendStarted(const std::string &service_name) {
 
     start_cmd = ReplaceAll(start_cmd, "${INPUT_DIR}", input_dir);
     start_cmd = ReplaceAll(start_cmd, "${OUTPUT_DIR}", output_dir);
-    start_cmd = ReplaceAll(start_cmd, "${SERVICE_NAME}", service_name);
+    start_cmd = ReplaceAll(start_cmd, "${SERVICE_NAME}", normalized_service);
 
-    std::vector<std::pair<std::string, std::string>> envs = {
-        {"PYTHONUNBUFFERED", "1"},
-        {"SERVICE_NAME", service_name},
-        {"INPUT_DIR", input_dir},
-        {"OUTPUT_DIR", output_dir},
-    };
-    std::string cmd = WithEnv(start_cmd, envs);
+    // Do not pass configuration via environment variables; use placeholders replaced above.
+    std::string cmd = start_cmd;
 
-    const std::string svc_log_dir = (std::filesystem::path(g_slave_log_dir) / service_name).string();
+    const std::string svc_log_dir = (std::filesystem::path(g_slave_log_dir) / normalized_service).string();
     try {
         std::filesystem::create_directories(svc_log_dir);
     } catch (...) {
@@ -438,9 +464,9 @@ static bool EnsureBackendStarted(const std::string &service_name) {
     const std::string svc_log_path = (std::filesystem::path(svc_log_dir) / "service.log").string();
     cmd = AppendRedirect(cmd, svc_log_path);
 
-    std::thread(ManagedSystemLoop, "backend_" + service_name, cmd, g_restart_delay_sec).detach();
-    g_running_backends.insert(service_name);
-    spdlog::info("[agent] backend started (managed) service={} backend={}", service_name, backend);
+    std::thread(ManagedSystemLoop, "backend_" + normalized_service, cmd, g_restart_delay_sec).detach();
+    g_running_backends.insert(normalized_service);
+    spdlog::info("[agent] backend started (managed) service={} backend={}", normalized_service, backend);
     return true;
 }
 
@@ -457,8 +483,7 @@ static void StartSlaveServices(const std::string &device_id) {
     json cfg = LoadAgentServicesConfig();
     const auto autostart_services_cfg = GetAutostartServices(cfg);
 
-    const char *py_env = std::getenv("PYTHON_BIN");
-    std::string python_bin = py_env && *py_env ? py_env : "python3";
+    std::string python_bin = "python3";
     if (cfg.contains("python_bin") && cfg["python_bin"].is_string()) {
         python_bin = cfg["python_bin"].get<std::string>();
     }
@@ -483,8 +508,7 @@ static void StartSlaveServices(const std::string &device_id) {
     } else {
         rst_send_cmd =
             "{PYTHON} src/modules/slave/rst_send.py --config config_files/slave_backend.json "
-            "--input-dir workspace/slave/data/output --interval 5 --target-port 8888 "
-            "--gateway-host {MASTER_IP} --gateway-port {MASTER_PORT} --device-id {DEVICE_ID}";
+            "--input-dir workspace/slave/data --interval 5 --target-port 8888";
     }
 
     recv_server_cmd = ReplaceAll(recv_server_cmd, "{PYTHON}", python_bin);
@@ -505,18 +529,15 @@ static void StartSlaveServices(const std::string &device_id) {
     if (!autostart_services_cfg.empty()) {
         spdlog::info("[agent] autostart_services(from agent_services.json)={}", JoinCsv(autostart_services_cfg));
     } else {
-        spdlog::info("[agent] autostart_services(from agent_services.json)=<empty>");
+    spdlog::info("[agent] autostart_services(from agent_services.json)=<empty>");
     }
     spdlog::info("[agent] recv_server_cmd={}", recv_server_cmd);
     spdlog::info("[agent] rst_send_cmd={}", rst_send_cmd);
-    std::vector<std::pair<std::string, std::string>> recv_envs = {
-        {"SLAVE_BACKEND_CONFIG", "config_files/slave_backend.json"},
-    };
 
     const std::string recv_log_path = (std::filesystem::path(g_slave_log_dir) / "recv_server.log").string();
     const std::string rst_log_path = (std::filesystem::path(g_slave_log_dir) / "rst_send.log").string();
 
-    std::thread(ManagedSystemLoop, "recv_server", AppendRedirect(WithEnv(recv_server_cmd, recv_envs), recv_log_path), restart_delay_sec).detach();
+    std::thread(ManagedSystemLoop, "recv_server", AppendRedirect(recv_server_cmd, recv_log_path), restart_delay_sec).detach();
     std::thread(ManagedSystemLoop, "rst_send", AppendRedirect(rst_send_cmd, rst_log_path), restart_delay_sec).detach();
 
     // 统一由 agent 启动后端服务：autostart_services(agent_services.json) + agent_autostart(slave_backend.json)
@@ -641,38 +662,23 @@ static void AutoConnectThread(MachineInfoCollector &collector, int disconnect_se
 static void PrintHelp(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options]\n"
               << "Options:\n"
-              << "  --master-ip <ip>         Set Master/Gateway IP (env: MASTER_IP, default: 127.0.0.1)\n"
-              << "  --master-port <port>     Set Master/Gateway Port (env: MASTER_PORT, default: 6666)\n"
+              << "  --master-ip <ip>         Set Master/Gateway IP (default: 127.0.0.1)\n"
+              << "  --master-port <port>     Set Master/Gateway Port (default: 6666)\n"
               << "  --disconnect <seconds>   Set auto-disconnect time (default: 30s, <=0 to disable)\n"
               << "  --reconnect <seconds>    Set auto-reconnect time (default: 20s)\n"
               << "  --bandwidth-fluctuate    Enable network bandwidth fluctuation simulation (50-500Mbps)\n"
               << "  --no-manage-services     Do not start/manage recv_server & rst_send\n"
-              << "                           (env: PYTHON_BIN overrides python executable)\n"
-              << "                           (env: AGENT_SERVICES_CONFIG overrides config path)\n"
-              << "                           (env: SLAVE_BACKEND_CONFIG overrides backend config)\n"
-              << "                           (env: AGENT_ALLOW_REMOTE_CONTROL=1 allows remote ensure_service)\n"
+              << "  --services-config <path> agent_services.json path (default: config_files/agent_services.json)\n"
+              << "  --backend-config <path>  slave_backend.json path (default: config_files/slave_backend.json)\n"
+              << "  --allow-remote-control   allow non-local ensure_service calls\n"
               << "  --help                   Show this help message\n" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
-    // --- 修改点 4: 优先读取环境变量 ---
-    const char* env_ip = std::getenv("MASTER_IP");
-    if (env_ip) {
-        g_gateway_ip = env_ip;
-    }
-    const char* env_port = std::getenv("MASTER_PORT");
-    if (env_port) {
-        try {
-            g_gateway_port = std::stoi(env_port);
-        } catch (...) {
-            spdlog::warn("Invalid MASTER_PORT env var, using default: {}", g_gateway_port);
-        }
-    }
-
     g_project_root = FindProjectRoot();
-    const char *allow_remote = std::getenv("AGENT_ALLOW_REMOTE_CONTROL");
-    g_allow_remote_control = (allow_remote && std::string(allow_remote) == "1");
     g_slave_log_dir = ResolvePath(g_project_root, "workspace/slave/log");
+    g_agent_services_config_path = ResolvePath(g_project_root, g_agent_services_config_path);
+    g_slave_backend_config_path = ResolvePath(g_project_root, g_slave_backend_config_path);
     SetupAgentLogging();
     InstallSignalHandlers();
 
@@ -711,6 +717,15 @@ int main(int argc, char* argv[]) {
         else if (arg == "--no-manage-services") {
             g_manage_services.store(false);
             spdlog::info("Disable managing slave services (recv_server/rst_send)");
+        }
+        else if (arg == "--services-config" && i + 1 < argc) {
+            g_agent_services_config_path = ResolvePath(g_project_root, argv[++i]);
+        }
+        else if (arg == "--backend-config" && i + 1 < argc) {
+            g_slave_backend_config_path = ResolvePath(g_project_root, argv[++i]);
+        }
+        else if (arg == "--allow-remote-control") {
+            g_allow_remote_control = true;
         }
 
         else if (arg == "--master-ip" && i + 1 < argc) {
@@ -845,6 +860,7 @@ int main(int argc, char* argv[]) {
                 return;
             }
             std::string service = j["service"].get<std::string>();
+            service = NormalizeServiceName(service);
             if (service.empty()) {
                 res.status = 400;
                 res.set_content(BuildFailed({{"error", "empty service"}}), "application/json");
