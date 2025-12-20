@@ -20,6 +20,7 @@
 #include <mutex>
 #include <filesystem>
 #include <algorithm>
+#include <csignal>
 
 // 将 const char* 硬编码改为全局变量
 // 默认值设为 127.0.0.1，方便本地测试。生产环境建议通过参数覆盖。
@@ -44,6 +45,18 @@ static int g_restart_delay_sec = 2;
 static std::string g_project_root = ".";
 static bool g_allow_remote_control = false;
 static std::string g_slave_log_dir = "workspace/slave/log";
+
+// 进程生命周期：agent 退出时需要关闭 recv_server/rst_send/后端进程
+static std::mutex g_proc_mu;
+#ifdef _WIN32
+static std::unordered_map<std::string, int> g_managed_pids; // unused on Windows
+#else
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <errno.h>
+static std::unordered_map<std::string, pid_t> g_managed_pgids; // name -> process group id
+#endif
 
 // 随机数生成器（用于带宽波动，范围调整为50-500Mbps）
 static std::random_device rd;
@@ -98,7 +111,34 @@ static std::string QuoteArg(const std::string &s) {
 #endif
 }
 
+static void StopAllManagedChildren() {
+#ifdef _WIN32
+    // Windows: best-effort only (agent doesn't own children reliably when started via system())
+    return;
+#else
+    std::lock_guard<std::mutex> lock(g_proc_mu);
+    for (const auto &kv : g_managed_pgids) {
+        pid_t pgid = kv.second;
+        if (pgid <= 0) continue;
+        // kill entire process group
+        kill(-pgid, SIGTERM);
+    }
+#endif
+}
+
+static void HandleSignal(int) {
+    g_is_running.store(false);
+}
+
+static void InstallSignalHandlers() {
+#ifndef _WIN32
+    std::signal(SIGINT, HandleSignal);
+    std::signal(SIGTERM, HandleSignal);
+#endif
+}
+
 static void ManagedSystemLoop(const std::string &name, const std::string &cmd, int restart_delay_sec) {
+#ifdef _WIN32
     while (g_is_running.load()) {
         spdlog::info("[agent] starting {}: {}", name, cmd);
         int rc = std::system(cmd.c_str());
@@ -108,6 +148,67 @@ static void ManagedSystemLoop(const std::string &name, const std::string &cmd, i
         spdlog::warn("[agent] {} exited with code {}, restarting in {}s", name, rc, restart_delay_sec);
         std::this_thread::sleep_for(std::chrono::seconds(restart_delay_sec));
     }
+#else
+    while (g_is_running.load()) {
+        spdlog::info("[agent] starting {}: {}", name, cmd);
+
+        pid_t pid = fork();
+        if (pid == 0) {
+            // child: create new process group so we can kill everything on shutdown
+            setpgid(0, 0);
+            execl("/bin/sh", "sh", "-c", cmd.c_str(), (char *)nullptr);
+            _exit(127);
+        }
+        if (pid < 0) {
+            spdlog::error("[agent] fork failed for {}, retry in {}s", name, restart_delay_sec);
+            std::this_thread::sleep_for(std::chrono::seconds(restart_delay_sec));
+            continue;
+        }
+
+        // parent: record pgid
+        pid_t pgid = pid;
+        setpgid(pid, pgid);
+        {
+            std::lock_guard<std::mutex> lock(g_proc_mu);
+            g_managed_pgids[name] = pgid;
+        }
+
+        int status = 0;
+        while (true) {
+            pid_t w = waitpid(pid, &status, 0);
+            if (w == -1 && errno == EINTR) {
+                if (!g_is_running.load()) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_proc_mu);
+            auto it = g_managed_pgids.find(name);
+            if (it != g_managed_pgids.end() && it->second == pgid) {
+                g_managed_pgids.erase(it);
+            }
+        }
+
+        if (!g_is_running.load()) {
+            // ensure group is terminated
+            kill(-pgid, SIGTERM);
+            break;
+        }
+
+        int rc = 0;
+        if (WIFEXITED(status)) {
+            rc = WEXITSTATUS(status);
+        } else if (WIFSIGNALED(status)) {
+            rc = 128 + WTERMSIG(status);
+        }
+        spdlog::warn("[agent] {} exited with code {}, restarting in {}s", name, rc, restart_delay_sec);
+        std::this_thread::sleep_for(std::chrono::seconds(restart_delay_sec));
+    }
+#endif
 }
 
 static std::string ReplaceAll(std::string s, const std::string &from, const std::string &to) {
@@ -573,6 +674,7 @@ int main(int argc, char* argv[]) {
     g_allow_remote_control = (allow_remote && std::string(allow_remote) == "1");
     g_slave_log_dir = ResolvePath(g_project_root, "workspace/slave/log");
     SetupAgentLogging();
+    InstallSignalHandlers();
 
     // 默认参数设置
     int disconnect_sec = 30;    // 默认断连时间30秒
@@ -647,6 +749,16 @@ int main(int argc, char* argv[]) {
     // 使用动态地址初始化 MachineInfoCollector
     MachineInfoCollector collector(g_gateway_ip, g_gateway_port);
     httplib::Server server;
+    // 允许在收到信号后优雅退出 listen，从而走到清理逻辑
+    std::thread([&server]() {
+        while (g_is_running.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+        try {
+            server.stop();
+        } catch (...) {
+        }
+    }).detach();
 
     // 初始注册节点
     if (!RegisterNode(collector)) {
@@ -769,6 +881,7 @@ int main(int argc, char* argv[]) {
 
     // 服务器退出时，通知线程并等待结束
     g_is_running = false;
+    StopAllManagedChildren();
     auto_connect_thread.join();
 
     return 0;
