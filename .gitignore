@@ -9,4 +9,4 @@ src/CMakeFiles
 *.png
 *.jpg
 edge-cluster-scheduler/src/modules/master/files/pic/
-src/modules/slave/yolov5-ascend/__pycache__/
+__pycache__/
