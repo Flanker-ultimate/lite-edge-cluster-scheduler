@@ -7,3 +7,4 @@ src/CMakeFiles
 *.png
 *.jpg
 **/__pycache__
+3rdparty/
