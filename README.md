@@ -268,3 +268,99 @@ lite-edge-cluster-scheduler/
 ## 📄 许可证
 
 [请在此处添加许可证信息]
+
+
+## Load Simulation & CSV
+
+### Simulate YOLO Requests
+
+Send a batch of YOLO requests to task_manager via gRPC. Use real images or random bytes.
+
+```bash
+python script/simulate_yolo_requests.py \
+  --host 127.0.0.1 \
+  --port 9999 \
+  --count 3000 \
+  --tasktype YoloV5 \
+  --source-dir /path/to/images
+```
+
+If `--source-dir` is not provided, the script will generate random JPEG-like bytes.
+
+### Random Load Simulation
+
+Run random IO/NET/YOLO load programs and expose active flags for CSV.
+
+```bash
+python script/run_load_sim.py --enable-io --enable-net --enable-yolo
+```
+
+This writes `workspace/slave/log/load_sim_state.json`, which is used by the CSV sampler.
+
+### CSV Output (slave)
+
+`rst_send.py` can write CSV with sub_req metrics and periodic sampling.
+
+```bash
+python src/modules/slave/rst_send.py --enable-csv --sample-interval 3
+```
+
+Disable CSV if needed:
+
+```bash
+python src/modules/slave/rst_send.py --disable-csv
+```
+
+Default CSV path: `workspace/slave/log/sub_req_metrics.csv`.
+
+
+## Device Metrics Collection
+
+### CSV Columns (for Excel)
+
+Record types:
+- `yolo_start`: sub_req first image arrives; snapshot metrics at start time.
+- `yolo_end`: sub_req completes; snapshot metrics at end time.
+- `normal_collect`: periodic sampling; request-specific fields may be empty.
+
+Notes:
+- `yolo_start` will have `start_time_ms`, but no `end_time_ms`.
+- `yolo_end` includes both `start_time_ms` and `end_time_ms`.
+
+Request and timing fields:
+- `record_type`, `timestamp_ms`
+- `req_id`, `sub_req_id`, `tasktype`, `client_ip`, `service`
+- `dst_device_id`, `dst_device_ip`, `sub_req_count`
+- `start_time_ms`, `end_time_ms`, `expected_end_time_ms`, `queue_len_at_start`
+
+Host metrics:
+- `host_cpu_util`, `host_mem_util`, `host_mem_used`, `host_mem_total`
+
+Network metrics:
+- `net_up_kb`, `net_down_kb`, `net_latency`
+
+Device metrics (NPU):
+- `npu_ai_core_util`, `npu_ai_cpu_util`, `npu_ctrl_cpu_util`
+- `npu_mem_total_mb`, `npu_mem_used_mb`, `npu_mem_bw_util`, `npu_temp`
+
+Load flags:
+- `active_io`, `active_net`, `active_yolo`
+
+### Load Simulation
+
+```bash
+python script/run_load_sim.py --enable-io --enable-net --enable-yolo
+```
+
+### YOLO Request Simulation
+
+```bash
+python script/simulate_yolo_requests.py \
+  --host 127.0.0.1 \
+  --port 9999 \
+  --count 3000 \
+  --tasktype YoloV5 \
+  --source-dir /path/to/images
+```
+
+CSV example file: `example/sub_req_metrics_example.csv`.

@@ -8,6 +8,7 @@
 #include <queue>
 #include <deque>
 #include <unordered_map>
+#include <cstdint>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <mutex>
@@ -39,10 +40,37 @@ struct ImageTask {
     std::string task_id;   // unique identifier, prefer filename
     std::string file_path; // absolute path on master disk
     std::string client_ip; // source ip for slave to report
+    std::string req_id;    // client request id
+    std::string sub_req_id; // sub-request id
     TaskType task_type{TaskType::Unknown};
     ScheduleStrategy schedule_strategy{ScheduleStrategy::LOAD_BASED};
     int retry_count{0};
     TaskStatus status{TaskStatus::PENDING};
+};
+
+struct ClientRequest {
+    std::string req_id;
+    std::string client_ip;
+    TaskType task_type{TaskType::Unknown};
+    ScheduleStrategy schedule_strategy{ScheduleStrategy::LOAD_BASED};
+    int total_num{0};
+    int64_t enqueue_time_ms{0};
+    std::vector<ImageTask> tasks;
+    std::vector<std::string> sub_req_ids;
+};
+
+struct SubRequest {
+    std::string sub_req_id;
+    std::string req_id;
+    std::string client_ip;
+    TaskType task_type{TaskType::Unknown};
+    ScheduleStrategy schedule_strategy{ScheduleStrategy::LOAD_BASED};
+    int sub_req_count{0};
+    int64_t enqueue_time_ms{0};
+    int64_t expected_end_time_ms{0};
+    DeviceID dst_device_id{};
+    std::string dst_device_ip;
+    std::vector<ImageTask> tasks;
 };
 
 struct StaticInfoItem {
@@ -73,8 +101,8 @@ struct StaticInfoItem {
 
 class TaskQueueManager {
 public:
-    void PushPending(const ImageTask &task, bool high_priority);
-    std::optional<ImageTask> PopPending();
+    void PushPending(const SubRequest &sub_req, bool high_priority);
+    std::optional<SubRequest> PopPending();
     void RecoverTasks(const DeviceID &device_id);
     bool AddRunningTask(const DeviceID &device_id, const ImageTask &task);
     std::optional<ImageTask> CompleteTaskAndGet(const std::string &reported_task_id);
@@ -82,7 +110,7 @@ public:
     void MoveToFailed(const ImageTask &task);
 
 private:
-    std::deque<ImageTask> pending_queue_;
+    std::deque<SubRequest> pending_queue_;
     std::unordered_map<DeviceID, std::list<ImageTask>> running_index_;
     std::list<ImageTask> failed_history_;
     std::mutex mutex_;
@@ -199,6 +227,10 @@ public:
     static void StartSchedulerLoop();
     static void SchedulerLoop();
     static void SubmitTask(const ImageTask &task, bool high_priority = false);
+    static void SubmitSubRequest(const SubRequest &sub_req, bool high_priority = false);
+    static void SubmitClientRequest(const ClientRequest &req);
+    static std::vector<SubRequest> AllocateSubRequests(const ClientRequest &req);
+    static std::vector<DeviceID> GetCandidateDeviceIds(TaskType ttype);
     static bool CompleteTask(const std::string &task_id);
     void display_devstatus(DeviceID dev_id){
         DeviceStatus status = device_status[dev_id];

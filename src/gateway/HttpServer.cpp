@@ -211,15 +211,39 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
         time_record_schedule.startRecord();
         auto body_json = nlohmann::json::parse(req.body);
 
-        // 检查必要字段：ip, filename, tasktype
-        if(!body_json.contains("ip")  || !body_json.contains("filename") || !body_json.contains("tasktype")) {
+        // 检查必要字段：ip, tasktype, filename(s)
+        if(!body_json.contains("ip") || !body_json.contains("tasktype")) {
             res.status = 400;
             res.set_content(R"({"status":"error","msg":"missing required fields"})", "application/json");
             return;
         }
         std::string ip = body_json["ip"].get<std::string>();
         TaskType tasktype = StrToTaskType(body_json["tasktype"].get<std::string>());
-        std::string filename = body_json["filename"].get<std::string>();
+        std::vector<std::string> filenames;
+        if (body_json.contains("filenames") && body_json["filenames"].is_array()) {
+            for (const auto &item : body_json["filenames"]) {
+                if (item.is_string()) {
+                    filenames.push_back(item.get<std::string>());
+                }
+            }
+        } else if (body_json.contains("filename") && body_json["filename"].is_string()) {
+            filenames.push_back(body_json["filename"].get<std::string>());
+        }
+        if (filenames.empty()) {
+            res.status = 400;
+            res.set_content(R"({"status":"error","msg":"missing filename(s)"})", "application/json");
+            return;
+        }
+        std::string req_id = body_json.value("req_id", "");
+        int total_num = body_json.value("total_num", static_cast<int>(filenames.size()));
+        if (total_num <= 0 || total_num != static_cast<int>(filenames.size())) {
+            res.status = 400;
+            res.set_content(R"({"status":"error","msg":"invalid total_num or filenames size mismatch"})", "application/json");
+            return;
+        }
+        if (req_id.empty()) {
+            req_id = filenames.front();
+        }
 
         // 解析调度策略参数
         auto strategy_param = req.get_param_value("stargety");
@@ -237,48 +261,33 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
             }
         }
 
-        // 拼接图片文件路径
-        fs::path fsfullpath = project_root / args.task_path / ip / filename;
-        std::string fullpath = fsfullpath.string();
-        // 读取图片
-        std::ifstream ifs(fullpath, std::ios::binary);
-        if (!ifs) {
-            spdlog::error("无法读取图片文件: {}", fullpath);
-            res.status = 500;
-            res.set_content(R"({"status":"error","msg":"failed to open image file"})", "application/json");
-            return;
+        std::vector<ImageTask> tasks;
+        tasks.reserve(filenames.size());
+        for (const auto &filename : filenames) {
+            fs::path fsfullpath = project_root / args.task_path / ip / filename;
+            ImageTask task;
+            task.task_id = filename;
+            task.file_path = fsfullpath.string();
+            task.client_ip = ip;
+            task.task_type = tasktype;
+            task.schedule_strategy = strategy;
+            task.req_id = req_id;
+            tasks.push_back(task);
         }
 
-        ImageTask task;
-        task.task_id = filename;
-        task.file_path = fullpath;
-        task.client_ip = ip;
-        task.task_type = tasktype;
-        task.schedule_strategy = strategy;
+        ClientRequest client_req;
+        client_req.req_id = req_id;
+        client_req.client_ip = ip;
+        client_req.task_type = tasktype;
+        client_req.schedule_strategy = strategy;
+        client_req.total_num = total_num;
+        client_req.enqueue_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        client_req.tasks = std::move(tasks);
 
-        // 先获取预计调度的设备信息
-        Device target_dev;
-        try {
-            target_dev = task.schedule_strategy == ScheduleStrategy::ROUND_ROBIN ? Docker_scheduler::RoundRobin_Schedule(task.task_type) : Docker_scheduler::Schedule(task.task_type);
+        Docker_scheduler::SubmitClientRequest(client_req);
 
-            // 打印设备负载信息
-            std::shared_lock<std::shared_mutex> lock(Docker_scheduler::getDeviceMutex());
-            auto& device_status = Docker_scheduler::getDeviceStatus();
-            auto status_it = device_status.find(target_dev.global_id);
-            if (status_it != device_status.end()) {
-                const auto& status = status_it->second;
-                spdlog::info("HTTP API: Task {} for client {} will be scheduled to device {} [CPU: {:.2f}%, MEM: {:.2f}%, XPU: {:.2f}%, Bandwidth: {:.2f}Mbps, Latency: {}ms]",
-                             filename, ip, target_dev.ip_address,
-                             status.cpu_used * 100, status.mem_used * 100, status.xpu_used * 100,
-                             status.net_bandwidth, static_cast<int>(status.net_latency * 1000));
-            }
-        } catch (const std::exception& e) {
-            spdlog::warn("HTTP API: Failed to get device info for task {}: {}", filename, e.what());
-        }
-
-        Docker_scheduler::SubmitTask(task, false);
-
-        spdlog::info("task {} enqueued for {} scheduling", filename,
+        spdlog::info("client_req {} enqueued: {} tasks, strategy={}", req_id, total_num,
                      strategy == ScheduleStrategy::ROUND_ROBIN ? "round-robin" : "load-based");
         res.status = 202;
         res.set_content(R"({"status":"queued","msg":"task enqueued"})", "application/json");

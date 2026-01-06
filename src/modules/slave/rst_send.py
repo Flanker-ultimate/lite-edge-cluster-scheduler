@@ -21,24 +21,344 @@ python3 rst_send.py -i /path/to/dir -t 3 -p 9999
 """
 
 import argparse
+import csv
 import http.client
 import json
 import os
+import socket
+import subprocess
+import threading
 import time
 from urllib.parse import urlparse
 from typing import List, Tuple
+
+import psutil
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../../"))
 
 # 默认扫描根目录（多 service 模式下主要由 --config 决定 result_dir）
+# Default scan root (multi-service mode uses --config result_dir)
 DEFAULT_INPUT_DIR = os.path.join(PROJECT_ROOT, "workspace", "slave", "data")
+LOG_DIR = os.path.join(PROJECT_ROOT, "workspace", "slave", "log")
+SUB_REQ_DIR = os.path.join(LOG_DIR, "sub_reqs")
+TASK_MAP_FILE = os.path.join(LOG_DIR, "task_map.jsonl")
+DEFAULT_CSV_PATH = os.path.join(LOG_DIR, "sub_req_metrics.csv")
+DEFAULT_SAMPLE_INTERVAL_SEC = 3
+LOAD_SIM_STATE_FILE = os.path.join(LOG_DIR, "load_sim_state.json")
 
 # 默认配置（仅默认值；建议由命令行显式传入）
 DEFAULT_GATEWAY_HOST = "127.0.0.1"
 DEFAULT_GATEWAY_PORT = 6666
 DEFAULT_DEVICE_ID = "unknown"
 DEFAULT_SLAVE_BACKEND_CONFIG = os.path.join(PROJECT_ROOT, "config_files", "slave_backend.json")
+
+os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(SUB_REQ_DIR, exist_ok=True)
+
+
+def _safe_name(raw: str) -> str:
+    out = []
+    for ch in raw:
+        if ch.isalnum() or ch in ("-", "_"):
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out) if out else "unknown"
+
+
+def parse_ascend_dmi_output(output: str) -> dict:
+    npu_data = {
+        "ai_core_info": {"usage_percent": 0},
+        "cpu_info": {"ai_cpu_usage_percent": 0, "control_cpu_usage_percent": 0},
+        "memory_info": {"total_mb": 0, "used_mb": 0, "bandwidth_usage_percent": 0},
+        "temperature_c": 0.0,
+    }
+    current_section = None
+    for line in output.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if "Information" in line:
+            current_section = line.strip()
+        parts = line.split(":", 1)
+        if len(parts) != 2:
+            continue
+        key, value = parts[0].strip(), parts[1].strip()
+        if current_section == "AI Core Information":
+            if key == "AI Core Usage (%)":
+                try:
+                    npu_data["ai_core_info"]["usage_percent"] = int(value)
+                except ValueError:
+                    pass
+        elif current_section == "CPU Information":
+            if key == "AI CPU Usage (%)":
+                try:
+                    npu_data["cpu_info"]["ai_cpu_usage_percent"] = int(value)
+                except ValueError:
+                    pass
+            elif key == "Control CPU Usage (%)":
+                try:
+                    npu_data["cpu_info"]["control_cpu_usage_percent"] = int(value)
+                except ValueError:
+                    pass
+        elif current_section == "Memory Information":
+            if key == "Total (MB)":
+                try:
+                    npu_data["memory_info"]["total_mb"] = int(value)
+                except ValueError:
+                    pass
+            elif key == "Used (MB)":
+                try:
+                    npu_data["memory_info"]["used_mb"] = int(value)
+                except ValueError:
+                    pass
+            elif key == "Bandwidth Usage (%)":
+                try:
+                    npu_data["memory_info"]["bandwidth_usage_percent"] = int(value)
+                except ValueError:
+                    pass
+        elif current_section == "Temperature (C)":
+            if key == "Temperature (C)":
+                try:
+                    npu_data["temperature_c"] = float(value)
+                except ValueError:
+                    pass
+    return npu_data
+
+
+def collect_npu_metrics() -> dict:
+    try:
+        result = subprocess.run(
+            ["ascend-dmi", "-i", "-dt"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return parse_ascend_dmi_output(result.stdout)
+    except Exception:
+        return {
+            "ai_core_info": {"usage_percent": 0},
+            "cpu_info": {"ai_cpu_usage_percent": 0, "control_cpu_usage_percent": 0},
+            "memory_info": {"total_mb": 0, "used_mb": 0, "bandwidth_usage_percent": 0},
+            "temperature_c": 0.0,
+        }
+
+
+class MetricsSampler:
+    def __init__(self, gateway_host: str, gateway_port: int, interval_sec: int):
+        self.gateway_host = gateway_host
+        self.gateway_port = int(gateway_port)
+        self.interval_sec = interval_sec
+        self._lock = threading.Lock()
+        self._last_sample = {}
+        self._last_net = psutil.net_io_counters()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _measure_latency_ms(self) -> float:
+        try:
+            start = time.perf_counter()
+            with socket.create_connection((self.gateway_host, self.gateway_port), timeout=1):
+                pass
+            return (time.perf_counter() - start) * 1000.0
+        except Exception:
+            return 0.0
+
+    def _sample(self) -> dict:
+        mem = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=None)
+        net_now = psutil.net_io_counters()
+        up_kb = (net_now.bytes_sent - self._last_net.bytes_sent) / 1024.0
+        down_kb = (net_now.bytes_recv - self._last_net.bytes_recv) / 1024.0
+        self._last_net = net_now
+        npu = collect_npu_metrics()
+        load_state = read_load_sim_state(LOAD_SIM_STATE_FILE)
+        return {
+            "timestamp_ms": int(time.time() * 1000),
+            "host_cpu_util": cpu,
+            "host_mem_util": mem.percent,
+            "host_mem_used": mem.used / (1024 * 1024),
+            "host_mem_total": mem.total / (1024 * 1024),
+            "net_up_kb": up_kb,
+            "net_down_kb": down_kb,
+            "net_latency": self._measure_latency_ms(),
+            "npu_ai_core_util": npu["ai_core_info"]["usage_percent"],
+            "npu_ai_cpu_util": npu["cpu_info"]["ai_cpu_usage_percent"],
+            "npu_ctrl_cpu_util": npu["cpu_info"]["control_cpu_usage_percent"],
+            "npu_mem_total_mb": npu["memory_info"]["total_mb"],
+            "npu_mem_used_mb": npu["memory_info"]["used_mb"],
+            "npu_mem_bw_util": npu["memory_info"]["bandwidth_usage_percent"],
+            "npu_temp": npu["temperature_c"],
+            "active_io": 1 if load_state.get("active_io") else 0,
+            "active_net": 1 if load_state.get("active_net") else 0,
+            "active_yolo": 1 if load_state.get("active_yolo") else 0,
+        }
+
+    def _loop(self):
+        psutil.cpu_percent(interval=None)
+        while True:
+            sample = self._sample()
+            with self._lock:
+                self._last_sample = sample
+            time.sleep(self.interval_sec)
+
+    def latest(self) -> dict:
+        with self._lock:
+            return dict(self._last_sample)
+
+
+class TaskMapIndex:
+    def __init__(self, path: str):
+        self.path = path
+        self._pos = 0
+        self._map = {}
+        self._lock = threading.Lock()
+
+    def _refresh(self):
+        if not os.path.isfile(self.path):
+            return
+        with open(self.path, "r", encoding="utf-8") as f:
+            f.seek(self._pos)
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except Exception:
+                    continue
+                task_id = payload.get("task_id")
+                sub_req_id = payload.get("sub_req_id")
+                req_id = payload.get("req_id")
+                if isinstance(task_id, str) and isinstance(sub_req_id, str):
+                    self._map[task_id] = {
+                        "sub_req_id": sub_req_id,
+                        "req_id": req_id,
+                        "tasktype": payload.get("tasktype", ""),
+                    }
+            self._pos = f.tell()
+
+    def get(self, task_id: str) -> dict:
+        with self._lock:
+            if task_id not in self._map:
+                self._refresh()
+            return self._map.get(task_id, {})
+
+
+class SubReqTracker:
+    def __init__(self, sub_req_dir: str):
+        self.sub_req_dir = sub_req_dir
+        self._lock = threading.Lock()
+        self._state = {}
+
+    def _load_meta(self, sub_req_id: str) -> dict:
+        path = os.path.join(self.sub_req_dir, f"{_safe_name(sub_req_id)}.json")
+        if not os.path.isfile(path):
+            return {"sub_req_id": sub_req_id, "sub_req_count": 0}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {"sub_req_id": sub_req_id, "sub_req_count": 0}
+
+    def on_task_done(self, sub_req_id: str) -> dict:
+        with self._lock:
+            state = self._state.get(sub_req_id)
+            if not state:
+                meta = self._load_meta(sub_req_id)
+                state = {"done": 0, "meta": meta, "done_recorded": False}
+                self._state[sub_req_id] = state
+            state["done"] += 1
+            total = int(state["meta"].get("sub_req_count") or 0)
+            if total > 0 and state["done"] >= total and not state["done_recorded"]:
+                state["done_recorded"] = True
+                return state["meta"]
+        return {}
+
+
+class SubReqCsvWriter:
+    HEADER = [
+        "record_type",
+        "timestamp_ms",
+        "req_id",
+        "sub_req_id",
+        "tasktype",
+        "client_ip",
+        "service",
+        "dst_device_id",
+        "dst_device_ip",
+        "sub_req_count",
+        "start_time_ms",
+        "end_time_ms",
+        "expected_end_time_ms",
+        "queue_len_at_start",
+        "host_cpu_util",
+        "host_mem_util",
+        "host_mem_used",
+        "host_mem_total",
+        "net_up_kb",
+        "net_down_kb",
+        "net_latency",
+        "npu_ai_core_util",
+        "npu_ai_cpu_util",
+        "npu_ctrl_cpu_util",
+        "npu_mem_total_mb",
+        "npu_mem_used_mb",
+        "npu_mem_bw_util",
+        "npu_temp",
+        "active_io",
+        "active_net",
+        "active_yolo",
+    ]
+
+    def __init__(self, path: str):
+        self.path = path
+        self._lock = threading.Lock()
+        if not os.path.isfile(self.path):
+            with open(self.path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(self.HEADER)
+
+    def write_row(self, meta: dict, metrics: dict, record_type: str):
+        row = [
+            record_type,
+            metrics.get("timestamp_ms", int(time.time() * 1000)),
+            meta.get("req_id", ""),
+            meta.get("sub_req_id", ""),
+            meta.get("tasktype", ""),
+            meta.get("client_ip", ""),
+            meta.get("service", ""),
+            meta.get("dst_device_id", ""),
+            meta.get("dst_device_ip", ""),
+            meta.get("sub_req_count", 0),
+            meta.get("start_time_ms", ""),
+            meta.get("end_time_ms", ""),
+            meta.get("expected_end_time_ms", ""),
+            meta.get("queue_len_at_start", ""),
+            metrics.get("host_cpu_util", 0),
+            metrics.get("host_mem_util", 0),
+            metrics.get("host_mem_used", 0),
+            metrics.get("host_mem_total", 0),
+            metrics.get("net_up_kb", 0),
+            metrics.get("net_down_kb", 0),
+            metrics.get("net_latency", 0),
+            metrics.get("npu_ai_core_util", 0),
+            metrics.get("npu_ai_cpu_util", 0),
+            metrics.get("npu_ctrl_cpu_util", 0),
+            metrics.get("npu_mem_total_mb", 0),
+            metrics.get("npu_mem_used_mb", 0),
+            metrics.get("npu_mem_bw_util", 0),
+            metrics.get("npu_temp", 0),
+            metrics.get("active_io", 0),
+            metrics.get("active_net", 0),
+            metrics.get("active_yolo", 0),
+        ]
+        with self._lock:
+            with open(self.path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(row)
 
 
 class StrictIPSender:
@@ -52,6 +372,9 @@ class StrictIPSender:
         device_id: str = DEFAULT_DEVICE_ID,
         config_path: str = DEFAULT_SLAVE_BACKEND_CONFIG,
         service: str = "",
+        csv_path: str = DEFAULT_CSV_PATH,
+        sample_interval_sec: int = DEFAULT_SAMPLE_INTERVAL_SEC,
+        enable_csv: bool = True,
     ):
         """
         Args:
@@ -68,6 +391,18 @@ class StrictIPSender:
         self.config_path = os.path.abspath(config_path) if config_path else ""
         self.service = service.strip()
         self.service_dirs = self._load_service_result_dirs()
+        self.enable_csv = enable_csv
+        if self.enable_csv:
+            self.task_map = TaskMapIndex(TASK_MAP_FILE)
+            self.sub_req_tracker = SubReqTracker(SUB_REQ_DIR)
+            self.metrics_sampler = MetricsSampler(self.gateway_host, self.gateway_port, sample_interval_sec)
+            self.csv_writer = SubReqCsvWriter(csv_path)
+            self._start_collect_writer(sample_interval_sec)
+        else:
+            self.task_map = None
+            self.sub_req_tracker = None
+            self.metrics_sampler = None
+            self.csv_writer = None
 
         # 兼容旧模式：未配置服务目录时，仍按 input_dir 扫描 <ip>/...
         if not self.service_dirs:
@@ -137,6 +472,71 @@ class StrictIPSender:
             except Exception:
                 pass
 
+    def _on_task_completed(self, task_id: str):
+        if not self.enable_csv:
+            return
+        mapping = self.task_map.get(task_id)
+        sub_req_id = mapping.get("sub_req_id")
+        if not sub_req_id:
+            return
+        meta = self.sub_req_tracker.on_task_done(sub_req_id)
+        if not meta:
+            return
+        if not meta.get("start_time_ms"):
+            meta["start_time_ms"] = int(time.time() * 1000)
+        if not meta.get("expected_end_time_ms"):
+            meta["expected_end_time_ms"] = 0
+        meta["end_time_ms"] = int(time.time() * 1000)
+        end_metrics = dict(self.metrics_sampler.latest())
+        end_metrics["timestamp_ms"] = meta.get("end_time_ms")
+        meta["end_metrics"] = end_metrics
+        sub_req_path = os.path.join(SUB_REQ_DIR, f"{_safe_name(sub_req_id)}.json")
+        try:
+            tmp = sub_req_path + ".part"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False)
+            os.replace(tmp, sub_req_path)
+        except Exception:
+            pass
+        self.csv_writer.write_row(meta, end_metrics, "yolo_end")
+
+    def _start_collect_writer(self, interval_sec: int):
+        def loop():
+            start_logged = set()
+            while True:
+                metrics = self.metrics_sampler.latest()
+                for name in os.listdir(SUB_REQ_DIR):
+                    if not name.endswith(".json"):
+                        continue
+                    path = os.path.join(SUB_REQ_DIR, name)
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            meta = json.load(f)
+                    except Exception:
+                        continue
+                    sub_req_id = meta.get("sub_req_id")
+                    if not sub_req_id or sub_req_id in start_logged:
+                        continue
+                    if meta.get("start_time_ms"):
+                        start_metrics = dict(self.metrics_sampler.latest())
+                        start_metrics["timestamp_ms"] = meta.get("start_time_ms")
+                        meta["start_metrics"] = start_metrics
+                        try:
+                            tmp = path + ".part"
+                            with open(tmp, "w", encoding="utf-8") as f:
+                                json.dump(meta, f, ensure_ascii=False)
+                            os.replace(tmp, path)
+                        except Exception:
+                            pass
+                        meta_row = dict(meta)
+                        meta_row["end_time_ms"] = ""
+                        self.csv_writer.write_row(meta_row, start_metrics, "yolo_start")
+                        start_logged.add(sub_req_id)
+                self.csv_writer.write_row({}, metrics, "normal_collect")
+                time.sleep(interval_sec)
+        t = threading.Thread(target=loop, daemon=True)
+        t.start()
+
     def get_ip_dirs_sorted(self, root_dir: str):
         """获取包含文件的IP子目录列表（旧优先）"""
         valid_ip_dirs = []
@@ -196,6 +596,7 @@ class StrictIPSender:
                 if not notified:
                     print(f"gateway notify failed, keep file for retry: {filename}")
                     continue
+                self._on_task_completed(filename)
                 success_count += 1
                 try:
                     os.remove(file_path)
@@ -342,12 +743,38 @@ def parse_args():
         default=DEFAULT_DEVICE_ID,
         help=f"device id (default: {DEFAULT_DEVICE_ID})",
     )
+    parser.add_argument(
+        "--csv-path",
+        default=DEFAULT_CSV_PATH,
+        help=f"sub_req csv output path (default: {DEFAULT_CSV_PATH})",
+    )
+    parser.add_argument(
+        "--sample-interval",
+        type=int,
+        default=DEFAULT_SAMPLE_INTERVAL_SEC,
+        help=f"metrics sample interval seconds (default: {DEFAULT_SAMPLE_INTERVAL_SEC})",
+    )
+    parser.add_argument(
+        "--enable-csv",
+        action="store_true",
+        help="enable csv output for sub_req metrics",
+    )
+    parser.add_argument(
+        "--disable-csv",
+        action="store_true",
+        help="disable csv output for sub_req metrics",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
 
+    enable_csv = True
+    if args.disable_csv:
+        enable_csv = False
+    if args.enable_csv:
+        enable_csv = True
     try:
         sender = StrictIPSender(
             input_dir=args.input_dir,
@@ -358,6 +785,9 @@ if __name__ == "__main__":
             device_id=args.device_id,
             config_path=args.config,
             service=args.service,
+            csv_path=args.csv_path,
+            sample_interval_sec=args.sample_interval,
+            enable_csv=enable_csv,
         )
         sender.run()
     except (FileNotFoundError, NotADirectoryError) as e:
@@ -366,3 +796,10 @@ if __name__ == "__main__":
         print(f"1. 目录 {args.input_dir} 存在")
         print(f"2. 该路径是一个目录")
         exit(1)
+def read_load_sim_state(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}

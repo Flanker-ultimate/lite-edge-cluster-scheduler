@@ -10,6 +10,7 @@ from typing import Dict, Iterator
 
 import grpc
 import time
+import uuid
 
 
 DEFAULT_TASK_TYPE = "yolo"
@@ -61,21 +62,7 @@ class ImageUploadService:
             self._ip_to_next_sequence[client_ip] = current
             return current
 
-    def _extract_peer_ip(self, context: grpc.ServicerContext) -> str:
-        peer = context.peer()  # e.g., 'ipv4:127.0.0.1:53012'
-        if peer.startswith("ipv4:"):
-            return peer.split(":")[1]
-        if peer.startswith("ipv6:"):
-            # ipv6:[addr]:port
-            try:
-                inside = peer.split(":", 1)[1]
-                if inside.startswith("["):
-                    return inside.split("]", 1)[0][1:]
-            except Exception:
-                pass
-        return "unknown"
-
-    def _save_and_forward(self, client_ip: str, filename_hint: str, content_b64: str, tasktype: str) -> Dict[str, str]:
+    def _save_image(self, client_ip: str, filename_hint: str, content_b64: str) -> str:
         t0 = time.perf_counter()
         file_bytes = base64.b64decode(content_b64)
         _, ext = os.path.splitext(filename_hint)
@@ -93,7 +80,49 @@ class ImageUploadService:
 
         print(f"saved {save_path} ({len(file_bytes)} bytes) from {client_ip}")
 
-        picture_info = self._build_picture_info(client_ip, ip_dir, filename, tasktype)
+        parse_ms = int((t_parsed - t0) * 1000)
+        save_ms = int((t_saved - t_parsed) * 1000)
+        print(
+            f"timing ip={client_ip} file={filename} size={len(file_bytes)}B "
+            f"parse_ms={parse_ms} save_ms={save_ms}"
+        )
+        return filename
+
+    def _extract_peer_ip(self, context: grpc.ServicerContext) -> str:
+        peer = context.peer()  # e.g., 'ipv4:127.0.0.1:53012'
+        if peer.startswith("ipv4:"):
+            return peer.split(":")[1]
+        if peer.startswith("ipv6:"):
+            # ipv6:[addr]:port
+            try:
+                inside = peer.split(":", 1)[1]
+                if inside.startswith("["):
+                    return inside.split("]", 1)[0][1:]
+            except Exception:
+                pass
+        return "unknown"
+
+    def _save_and_forward(self, client_ip: str, filename_hint: str, content_b64: str, tasktype: str, req_id: str = "") -> Dict[str, str]:
+        t0 = time.perf_counter()
+        file_bytes = base64.b64decode(content_b64)
+        _, ext = os.path.splitext(filename_hint)
+        t_parsed = time.perf_counter()
+
+        ip_dir = os.path.join(self.upload_root, client_ip)
+        ensure_directory_exists(ip_dir)
+
+        seq = self.next_sequence_for_ip(client_ip)
+        filename = f"{client_ip}_{seq}{ext}"
+        save_path = os.path.join(ip_dir, filename)
+        with open(save_path, "wb") as f:
+            f.write(file_bytes)
+        t_saved = time.perf_counter()
+
+        print(f"saved {save_path} ({len(file_bytes)} bytes) from {client_ip}")
+
+        if not req_id:
+            req_id = f"{client_ip}_{uuid.uuid4().hex}"
+        picture_info = self._build_picture_info(client_ip, ip_dir, filename, tasktype, req_id=req_id, total_num=1)
         t_forward_start = time.perf_counter()
         try:
             self._forward_picture_info(picture_info)
@@ -113,7 +142,15 @@ class ImageUploadService:
         )
         return {"filename": filename, "saved_path": save_path}
 
-    def _build_picture_info(self, client_ip: str, dir_path: str, filename: str, tasktype: str) -> Dict[str, str]:
+    def _build_picture_info(
+        self,
+        client_ip: str,
+        dir_path: str,
+        filename: str,
+        tasktype: str,
+        req_id: str,
+        total_num: int,
+    ) -> Dict[str, str]:
         try:
             rel_dir = os.path.relpath(dir_path, self.upload_root)
         except Exception:
@@ -126,6 +163,24 @@ class ImageUploadService:
             "tasktype": tasktype or DEFAULT_TASK_TYPE,
             "filepath": rel_dir,
             "filename": filename,
+            "req_id": req_id,
+            "total_num": total_num,
+        }
+
+    def _build_batch_info(
+        self,
+        client_ip: str,
+        filenames,
+        tasktype: str,
+        req_id: str,
+        total_num: int,
+    ) -> Dict[str, str]:
+        return {
+            "ip": client_ip,
+            "tasktype": tasktype or DEFAULT_TASK_TYPE,
+            "filenames": filenames,
+            "req_id": req_id,
+            "total_num": total_num,
         }
 
     def _forward_picture_info(self, picture_info: Dict[str, str]) -> None:
@@ -155,8 +210,9 @@ class ImageUploadService:
             filename = payload.get("filename", "")
             content_b64 = payload.get("content_b64", "")
             tasktype = payload.get("tasktype", DEFAULT_TASK_TYPE)
+            req_id = payload.get("req_id", "")
             client_ip = self._extract_peer_ip(context)
-            result = self._save_and_forward(client_ip, filename, content_b64, tasktype)
+            result = self._save_and_forward(client_ip, filename, content_b64, tasktype, req_id=req_id)
             return json.dumps(result).encode("utf-8")
         except Exception as exc:
             context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
@@ -166,17 +222,35 @@ class ImageUploadService:
     def UploadImages(self, request_iterator: Iterator[bytes], context: grpc.ServicerContext) -> bytes:
         client_ip = self._extract_peer_ip(context)
         saved_count = 0
+        filenames = []
+        req_id = ""
+        total_num = None
         for req in request_iterator:
             try:
                 payload = json.loads(req.decode("utf-8"))
                 filename = payload.get("filename", "")
                 content_b64 = payload.get("content_b64", "")
                 tasktype = payload.get("tasktype", DEFAULT_TASK_TYPE)
-                _ = self._save_and_forward(client_ip, filename, content_b64, tasktype)
+                if not req_id and isinstance(payload.get("req_id"), str):
+                    req_id = payload.get("req_id", "")
+                if total_num is None and isinstance(payload.get("total_num"), int):
+                    total_num = payload.get("total_num")
+                saved_name = self._save_image(client_ip, filename, content_b64)
+                filenames.append(saved_name)
                 saved_count += 1
             except Exception:
                 # skip this one, continue streaming
                 continue
+        if saved_count > 0:
+            if not req_id:
+                req_id = f"{client_ip}_{uuid.uuid4().hex}"
+            if total_num is None or total_num != saved_count:
+                total_num = saved_count
+            payload = self._build_batch_info(client_ip, filenames, tasktype, req_id, total_num)
+            try:
+                self._forward_picture_info(payload)
+            except Exception:
+                pass
         return json.dumps({"saved_count": saved_count}).encode("utf-8")
 
 

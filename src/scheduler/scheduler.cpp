@@ -10,6 +10,8 @@
 #include <sstream>
 #include <filesystem>
 #include <algorithm>
+#include <cmath>
+#include <boost/uuid/nil_generator.hpp>
 std::map<TaskType, std::map<DeviceType, StaticInfoItem> > Docker_scheduler::static_info; // static task info
 TaskQueueManager Docker_scheduler::task_queue_manager_;
 
@@ -27,21 +29,42 @@ std::once_flag Docker_scheduler::scheduler_loop_once_flag_;
 //Ort::Session* Docker_scheduler::onnx_session = nullptr;
 bool Docker_scheduler::is_model_loaded = false;
 size_t Docker_scheduler::rr_index = 0;
-std::optional<ImageTask> TaskQueueManager::PopPending() {
-    std::unique_lock<std::mutex> lock(mutex_);
-    pending_cv_.wait(lock, [this]() { return !pending_queue_.empty(); });
-    ImageTask task = pending_queue_.front();
-    pending_queue_.pop_front();
-    return task;
+
+namespace {
+int64_t NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-void TaskQueueManager::PushPending(const ImageTask &task, bool high_priority) {
+SubRequest MakeSingleSubRequest(const ImageTask &task) {
+    SubRequest sub_req;
+    sub_req.req_id = task.req_id.empty() ? "req_unknown" : task.req_id;
+    sub_req.sub_req_id = task.sub_req_id.empty() ? ("sub_" + task.task_id) : task.sub_req_id;
+    sub_req.client_ip = task.client_ip;
+    sub_req.task_type = task.task_type;
+    sub_req.schedule_strategy = task.schedule_strategy;
+    sub_req.sub_req_count = 1;
+    sub_req.enqueue_time_ms = NowMs();
+    sub_req.tasks.push_back(task);
+    return sub_req;
+}
+} // namespace
+
+std::optional<SubRequest> TaskQueueManager::PopPending() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    pending_cv_.wait(lock, [this]() { return !pending_queue_.empty(); });
+    SubRequest sub_req = pending_queue_.front();
+    pending_queue_.pop_front();
+    return sub_req;
+}
+
+void TaskQueueManager::PushPending(const SubRequest &sub_req, bool high_priority) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (high_priority) {
-            pending_queue_.push_front(task);
+            pending_queue_.push_front(sub_req);
         } else {
-            pending_queue_.push_back(task);
+            pending_queue_.push_back(sub_req);
         }
     }
     pending_cv_.notify_one();
@@ -93,7 +116,7 @@ void TaskQueueManager::RecoverTasks(const DeviceID &device_id) {
         task.retry_count += 1;
         task.status = TaskStatus::PENDING;
         if (task.retry_count <= 3) {
-            pending_queue_.push_front(task);
+            pending_queue_.push_front(MakeSingleSubRequest(task));
         } else {
             failed_history_.push_back(task);
         }
@@ -114,7 +137,20 @@ void Docker_scheduler::StartSchedulerLoop() {
 }
 
 void Docker_scheduler::SubmitTask(const ImageTask &task, bool high_priority) {
-    task_queue_manager_.PushPending(task, high_priority);
+    task_queue_manager_.PushPending(MakeSingleSubRequest(task), high_priority);
+    StartSchedulerLoop();
+}
+
+void Docker_scheduler::SubmitSubRequest(const SubRequest &sub_req, bool high_priority) {
+    task_queue_manager_.PushPending(sub_req, high_priority);
+    StartSchedulerLoop();
+}
+
+void Docker_scheduler::SubmitClientRequest(const ClientRequest &req) {
+    auto sub_reqs = AllocateSubRequests(req);
+    for (const auto &sub_req : sub_reqs) {
+        task_queue_manager_.PushPending(sub_req, false);
+    }
     StartSchedulerLoop();
 }
 
@@ -122,91 +158,288 @@ bool Docker_scheduler::CompleteTask(const std::string &task_id) {
     return task_queue_manager_.CompleteTask(task_id);
 }
 
+std::vector<DeviceID> Docker_scheduler::GetCandidateDeviceIds(TaskType ttype) {
+    std::vector<DeviceID> device_ids;
+    std::shared_lock<std::shared_mutex> lock(devs_mutex);
+    if (ttype != TaskType::Unknown) {
+        for (const auto &pair : device_active_services) {
+            const auto &device_id = pair.first;
+            const auto &services = pair.second;
+            if (device_status.find(device_id) == device_status.end()) {
+                continue;
+            }
+            if (std::find(services.begin(), services.end(), ttype) != services.end()) {
+                device_ids.push_back(device_id);
+            }
+        }
+        if (device_ids.empty()) {
+            auto it = tdMap.find(ttype);
+            if (it != tdMap.end()) {
+                device_ids.reserve(it->second.size());
+                for (const auto &entry : it->second) {
+                    if (device_status.find(entry.first) != device_status.end()) {
+                        device_ids.push_back(entry.first);
+                    }
+                }
+            }
+        }
+    }
+    if (device_ids.empty()) {
+        device_ids.reserve(device_status.size());
+        for (const auto &entry : device_status) {
+            device_ids.push_back(entry.first);
+        }
+    }
+    return device_ids;
+}
+
+std::vector<SubRequest> Docker_scheduler::AllocateSubRequests(const ClientRequest &req) {
+    if (req.total_num <= 0 || req.tasks.empty()) {
+        throw std::runtime_error("client request has no tasks to allocate");
+    }
+    if (static_cast<int>(req.tasks.size()) != req.total_num) {
+        throw std::runtime_error("client request total_num does not match tasks size");
+    }
+
+    auto candidate_ids = GetCandidateDeviceIds(req.task_type);
+    if (candidate_ids.empty()) {
+        throw std::runtime_error("no candidate devices available for batch scheduling");
+    }
+
+    struct DeviceScore {
+        DeviceID id;
+        Device device;
+        double load;
+        double weight;
+        double fractional;
+        int count;
+    };
+
+    std::vector<DeviceScore> scores;
+    {
+        std::shared_lock<std::shared_mutex> lock(devs_mutex);
+        scores.reserve(candidate_ids.size());
+        for (const auto &device_id : candidate_ids) {
+            auto status_it = device_status.find(device_id);
+            auto dev_it = device_static_info.find(device_id);
+            if (status_it == device_status.end() || dev_it == device_static_info.end()) {
+                continue;
+            }
+            const auto &status = status_it->second;
+            const double w_cpu = 0.3;
+            const double w_mem = 0.1;
+            const double w_xpu = 0.4;
+            const double w_bandwidth = 1;
+            const double w_net_latency = 1;
+            double load = w_cpu * status.cpu_used +
+                          w_mem * status.mem_used +
+                          w_xpu * status.xpu_used +
+                          w_bandwidth * status.net_bandwidth +
+                          w_net_latency * status.net_latency;
+            scores.push_back({device_id, dev_it->second, load, 0.0, 0.0, 0});
+        }
+    }
+    if (scores.empty()) {
+        throw std::runtime_error("no device status available for batch scheduling");
+    }
+
+    if (req.schedule_strategy == ScheduleStrategy::ROUND_ROBIN) {
+        const int n = static_cast<int>(scores.size());
+        const int base = req.total_num / n;
+        int remainder = req.total_num % n;
+        for (auto &s : scores) {
+            s.count = base;
+        }
+        for (int i = 0; i < remainder; ++i) {
+            const int idx = static_cast<int>((rr_index + i) % scores.size());
+            scores[idx].count += 1;
+        }
+        rr_index = (rr_index + remainder) % scores.size();
+    } else {
+        const double min_load = 1e-6;
+        double weight_sum = 0.0;
+        for (auto &s : scores) {
+            s.weight = 1.0 / std::max(s.load, min_load);
+            weight_sum += s.weight;
+        }
+        int assigned = 0;
+        for (auto &s : scores) {
+            double exact = (s.weight / weight_sum) * req.total_num;
+            s.count = static_cast<int>(std::floor(exact));
+            s.fractional = exact - s.count;
+            assigned += s.count;
+        }
+        int remainder = req.total_num - assigned;
+        std::sort(scores.begin(), scores.end(), [](const DeviceScore &a, const DeviceScore &b) {
+            return a.fractional > b.fractional;
+        });
+        for (int i = 0; i < remainder; ++i) {
+            scores[i % scores.size()].count += 1;
+        }
+    }
+
+    std::vector<SubRequest> sub_reqs;
+    sub_reqs.reserve(scores.size());
+    size_t task_idx = 0;
+    int sub_idx = 0;
+    for (const auto &score : scores) {
+        if (score.count <= 0) {
+            continue;
+        }
+        SubRequest sub_req;
+        sub_req.req_id = req.req_id;
+        sub_req.client_ip = req.client_ip;
+        sub_req.task_type = req.task_type;
+        sub_req.schedule_strategy = req.schedule_strategy;
+        sub_req.sub_req_count = score.count;
+        sub_req.enqueue_time_ms = req.enqueue_time_ms;
+        sub_req.dst_device_id = score.id;
+        sub_req.dst_device_ip = score.device.ip_address;
+        sub_req.sub_req_id = req.req_id + "_" + std::to_string(sub_idx++);
+
+        for (int i = 0; i < score.count; ++i) {
+            if (task_idx >= req.tasks.size()) {
+                break;
+            }
+            ImageTask task = req.tasks[task_idx++];
+            task.req_id = sub_req.req_id;
+            task.sub_req_id = sub_req.sub_req_id;
+            sub_req.tasks.push_back(task);
+        }
+        sub_req.sub_req_count = static_cast<int>(sub_req.tasks.size());
+        sub_reqs.push_back(sub_req);
+    }
+
+    return sub_reqs;
+}
+
 void Docker_scheduler::SchedulerLoop() {
     const int max_retries = 3;
     while (true) {
-        auto task_opt = task_queue_manager_.PopPending();
-        if (!task_opt.has_value()) {
+        auto sub_req_opt = task_queue_manager_.PopPending();
+        if (!sub_req_opt.has_value()) {
             continue;
         }
-        ImageTask task = *task_opt;
+        SubRequest sub_req = *sub_req_opt;
 
         Device target_device;
+        bool use_assigned = (sub_req.dst_device_id != boost::uuids::nil_uuid());
         try {
-            target_device = task.schedule_strategy == ScheduleStrategy::ROUND_ROBIN ? RoundRobin_Schedule(task.task_type) : Schedule(task.task_type);
+            if (use_assigned) {
+                auto it = device_static_info.find(sub_req.dst_device_id);
+                if (it == device_static_info.end()) {
+                    throw std::runtime_error("assigned device not found");
+                }
+                target_device = it->second;
+            } else {
+                target_device = sub_req.schedule_strategy == ScheduleStrategy::ROUND_ROBIN
+                                    ? RoundRobin_Schedule(sub_req.task_type)
+                                    : Schedule(sub_req.task_type);
+                sub_req.dst_device_id = target_device.global_id;
+                sub_req.dst_device_ip = target_device.ip_address;
+            }
 
-            // Add device load logging
             {
                 std::shared_lock<std::shared_mutex> lock(devs_mutex);
                 auto status_it = device_status.find(target_device.global_id);
                 if (status_it != device_status.end()) {
                     const auto& status = status_it->second;
-                    spdlog::info("Task {} selected device {} [CPU: {:.2f}%, MEM: {:.2f}%, XPU: {:.2f}%, Bandwidth: {:.2f}Mbps, Latency: {}ms]",
-                                 task.task_id, target_device.ip_address,
+                    spdlog::info("SubReq {} selected device {} [CPU: {:.2f}%, MEM: {:.2f}%, XPU: {:.2f}%, Bandwidth: {:.2f}Mbps, Latency: {}ms]",
+                                 sub_req.sub_req_id, target_device.ip_address,
                                  status.cpu_used * 100, status.mem_used * 100, status.xpu_used * 100,
                                  status.net_bandwidth, static_cast<int>(status.net_latency * 1000));
                 }
             }
         } catch (const std::exception &e) {
-            spdlog::error("Schedule failed for task {}: {}", task.task_id, e.what());
-            task.retry_count++;
-            if (task.retry_count <= max_retries) {
-                task_queue_manager_.PushPending(task, true);
-            } else {
-                task_queue_manager_.MoveToFailed(task);
+            spdlog::error("Schedule failed for sub_req {}: {}", sub_req.sub_req_id, e.what());
+            if (!sub_req.tasks.empty()) {
+                for (auto &task : sub_req.tasks) {
+                    task.retry_count++;
+                    if (task.retry_count <= max_retries) {
+                        task_queue_manager_.PushPending(MakeSingleSubRequest(task), true);
+                    } else {
+                        task_queue_manager_.MoveToFailed(task);
+                    }
+                }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
-        std::ifstream ifs(task.file_path, std::ios::binary);
-        if (!ifs) {
-            spdlog::error("Failed to open task file: {}", task.file_path);
-            task.retry_count++;
-            if (task.retry_count <= max_retries) {
-                task_queue_manager_.PushPending(task, true);
-            } else {
-                task_queue_manager_.MoveToFailed(task);
+        try {
+            httplib::Client meta_cli(target_device.ip_address, 20810);
+            nlohmann::json meta_payload;
+            meta_payload["req_id"] = sub_req.req_id;
+            meta_payload["sub_req_id"] = sub_req.sub_req_id;
+            meta_payload["sub_req_count"] = sub_req.sub_req_count;
+            meta_payload["tasktype"] = sub_req.task_type == TaskType::Unknown ? "Unknown" : nlohmann::json(sub_req.task_type);
+            meta_payload["dst_device_id"] = boost::uuids::to_string(sub_req.dst_device_id);
+            meta_payload["dst_device_ip"] = target_device.ip_address;
+            meta_payload["enqueue_time_ms"] = sub_req.enqueue_time_ms;
+            auto res = meta_cli.Post("/recv_sub_req_meta", meta_payload.dump(), "application/json");
+            if (!res || res->status != 200) {
+                spdlog::warn("Send sub_req_meta {} failed, status={}", sub_req.sub_req_id, res ? res->status : -1);
+                task_queue_manager_.PushPending(sub_req, true);
+                continue;
             }
+        } catch (const std::exception &e) {
+            spdlog::error("Exception sending sub_req_meta {}: {}", sub_req.sub_req_id, e.what());
+            task_queue_manager_.PushPending(sub_req, true);
             continue;
         }
-        std::ostringstream buffer;
-        buffer << ifs.rdbuf();
-        std::string image_data = buffer.str();
 
-        nlohmann::json meta_json;
-        meta_json["ip"] = task.client_ip;
-        meta_json["file_name"] = task.task_id;
-        // Avoid JSON string being serialized with quotes like "\"YoloV5\""
-        meta_json["tasktype"] = task.task_type == TaskType::Unknown ? "Unknown" : nlohmann::json(task.task_type);
-        std::string meta_str = meta_json.dump();
-
-        try {
-            httplib::Client cli(target_device.ip_address, 20810);
-            httplib::MultipartFormDataItems form_items = {
-                {"pic_file", image_data, task.task_id, "application/octet-stream"},
-                {"pic_info", meta_str, "", "application/json"}
-            };
-            auto res = cli.Post("/recv_task", form_items);
-            if (res && res->status == 200) {
-                task_queue_manager_.AddRunningTask(target_device.global_id, task);
-                spdlog::info("Task {} dispatched to device {}", task.task_id, target_device.ip_address);
-            } else {
-                spdlog::warn("Send task {} failed, status={}", task.task_id, res ? res->status : -1);
+        for (auto &task : sub_req.tasks) {
+            std::ifstream ifs(task.file_path, std::ios::binary);
+            if (!ifs) {
+                spdlog::error("Failed to open task file: {}", task.file_path);
                 task.retry_count++;
                 if (task.retry_count <= max_retries) {
-                    task_queue_manager_.PushPending(task, true);
+                    task_queue_manager_.PushPending(MakeSingleSubRequest(task), true);
                 } else {
                     task_queue_manager_.MoveToFailed(task);
                 }
+                continue;
             }
-        } catch (const std::exception &e) {
-            spdlog::error("Exception sending task {}: {}", task.task_id, e.what());
-            task.retry_count++;
-            if (task.retry_count <= max_retries) {
-                task_queue_manager_.PushPending(task, true);
-            } else {
-                task_queue_manager_.MoveToFailed(task);
+            std::ostringstream buffer;
+            buffer << ifs.rdbuf();
+            std::string image_data = buffer.str();
+
+            nlohmann::json meta_json;
+            meta_json["ip"] = task.client_ip;
+            meta_json["file_name"] = task.task_id;
+            meta_json["tasktype"] = task.task_type == TaskType::Unknown ? "Unknown" : nlohmann::json(task.task_type);
+            meta_json["req_id"] = task.req_id;
+            meta_json["sub_req_id"] = task.sub_req_id;
+            meta_json["sub_req_count"] = sub_req.sub_req_count;
+            std::string meta_str = meta_json.dump();
+
+            try {
+                httplib::Client cli(target_device.ip_address, 20810);
+                httplib::MultipartFormDataItems form_items = {
+                    {"pic_file", image_data, task.task_id, "application/octet-stream"},
+                    {"pic_info", meta_str, "", "application/json"}
+                };
+                auto res = cli.Post("/recv_task", form_items);
+                if (res && res->status == 200) {
+                    task_queue_manager_.AddRunningTask(target_device.global_id, task);
+                    spdlog::info("Task {} dispatched to device {}", task.task_id, target_device.ip_address);
+                } else {
+                    spdlog::warn("Send task {} failed, status={}", task.task_id, res ? res->status : -1);
+                    task.retry_count++;
+                    if (task.retry_count <= max_retries) {
+                        task_queue_manager_.PushPending(MakeSingleSubRequest(task), true);
+                    } else {
+                        task_queue_manager_.MoveToFailed(task);
+                    }
+                }
+            } catch (const std::exception &e) {
+                spdlog::error("Exception sending task {}: {}", task.task_id, e.what());
+                task.retry_count++;
+                if (task.retry_count <= max_retries) {
+                    task_queue_manager_.PushPending(MakeSingleSubRequest(task), true);
+                } else {
+                    task_queue_manager_.MoveToFailed(task);
+                }
             }
         }
     }

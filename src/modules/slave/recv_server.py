@@ -23,13 +23,15 @@ DATA_ROOT = os.path.join(WORKSPACE_DIR, "data")
 LOG_DIR = os.path.join(WORKSPACE_DIR, "log")
 
 COUNT_LOG_FILE = os.path.join(LOG_DIR, "receive_stats.log")
+SUB_REQ_DIR = os.path.join(LOG_DIR, "sub_reqs")
+TASK_MAP_FILE = os.path.join(LOG_DIR, "task_map.jsonl")
 
 # 其他配置
 AGENT_PORT = 20810
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
 # 创建必要的目录
-for path in [DATA_ROOT, LOG_DIR]:
+for path in [DATA_ROOT, LOG_DIR, SUB_REQ_DIR]:
     os.makedirs(path, exist_ok=True)
 
 EXECUTOR = ThreadPoolExecutor(max_workers=4)
@@ -40,6 +42,13 @@ RECV_COUNT = 0
 RECV_LOG_INTERVAL = 500  # 每收到 500 张记录一次时间戳
 
 app = Flask(__name__)
+
+SUB_REQ_LOCK = threading.Lock()
+SUB_REQS = {}
+SUB_REQ_QUEUE_LOCK = threading.Lock()
+SUB_REQ_QUEUE = {}
+SUB_REQ_STATE = {}
+SUB_REQ_WORKERS = {}
 
 _SLAVE_BACKEND_CONFIG_PATH = ""
 _AGENT_CONTROL_PORT = 8000
@@ -116,6 +125,126 @@ def _get_service_entry(cfg: dict, service_name: str) -> dict:
             return v
     return {}
 
+def _safe_name(raw: str) -> str:
+    out = []
+    for ch in raw:
+        if ch.isalnum() or ch in ("-", "_"):
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out) if out else "unknown"
+
+def _sub_req_file_path(sub_req_id: str) -> str:
+    return os.path.join(SUB_REQ_DIR, f"{_safe_name(sub_req_id)}.json")
+
+def _write_sub_req_file(entry: dict) -> None:
+    sub_req_id = entry.get("sub_req_id", "unknown")
+    path = _sub_req_file_path(sub_req_id)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(entry, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+def _append_task_map(task_id: str, sub_req_id: str, req_id: str, tasktype: str, client_ip: str) -> None:
+    line = json.dumps(
+        {
+            "task_id": task_id,
+            "sub_req_id": sub_req_id,
+            "req_id": req_id,
+            "tasktype": tasktype,
+            "client_ip": client_ip,
+            "recv_time": time.time(),
+        },
+        ensure_ascii=False,
+    )
+    with open(TASK_MAP_FILE, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+def _resolve_service_name(tasktype: str, cfg: dict) -> str:
+    ttype = _normalize_tasktype(tasktype)
+    service_name = ttype if ttype and ttype != "Unknown" else _get_default_service(cfg)
+    if not service_name:
+        service_name = "Unknown"
+    return service_name
+
+def _move_sub_req_files(state: dict) -> None:
+    staging_root = state.get("staging_root")
+    input_root = state.get("input_root")
+    if not staging_root or not input_root:
+        return
+    for dirpath, _, filenames in os.walk(staging_root):
+        rel = os.path.relpath(dirpath, staging_root)
+        if rel == ".":
+            rel = ""
+        target_dir = os.path.join(input_root, rel)
+        os.makedirs(target_dir, exist_ok=True)
+        for name in filenames:
+            if name.endswith(".part"):
+                continue
+            src = os.path.join(dirpath, name)
+            dst = os.path.join(target_dir, name)
+            os.replace(src, dst)
+    try:
+        for root, dirs, files in os.walk(staging_root, topdown=False):
+            for name in files:
+                try:
+                    os.remove(os.path.join(root, name))
+                except Exception:
+                    pass
+            for name in dirs:
+                try:
+                    os.rmdir(os.path.join(root, name))
+                except Exception:
+                    pass
+        os.rmdir(staging_root)
+    except Exception:
+        pass
+
+def _sub_req_worker(service_name: str):
+    while True:
+        with SUB_REQ_QUEUE_LOCK:
+            queue = SUB_REQ_QUEUE.get(service_name, [])
+            sub_req_id = queue[0] if queue else ""
+        if not sub_req_id:
+            time.sleep(0.05)
+            continue
+        state = SUB_REQ_STATE.get(sub_req_id)
+        if not state:
+            with SUB_REQ_QUEUE_LOCK:
+                queue = SUB_REQ_QUEUE.get(service_name, [])
+                if queue and queue[0] == sub_req_id:
+                    queue.pop(0)
+            continue
+        expected = int(state.get("expected") or 0)
+        received = int(state.get("received") or 0)
+        if expected <= 0 or received < expected:
+            time.sleep(0.05)
+            continue
+        _move_sub_req_files(state)
+        with SUB_REQ_QUEUE_LOCK:
+            queue = SUB_REQ_QUEUE.get(service_name, [])
+            if queue and queue[0] == sub_req_id:
+                queue.pop(0)
+        SUB_REQ_STATE.pop(sub_req_id, None)
+
+def _ensure_worker(service_name: str):
+    if service_name in SUB_REQ_WORKERS:
+        return
+    t = threading.Thread(target=_sub_req_worker, args=(service_name,), daemon=True)
+    SUB_REQ_WORKERS[service_name] = t
+    t.start()
+
+def _count_pending_files(root_dir: str) -> int:
+    total = 0
+    if not root_dir or not os.path.isdir(root_dir):
+        return 0
+    for dirpath, _, filenames in os.walk(root_dir):
+        for name in filenames:
+            if name.endswith(".part"):
+                continue
+            total += 1
+    return total
+
 
 def _ensure_backend_via_agent(service_name: str, timeout_sec: int = 3) -> None:
     """
@@ -164,6 +293,62 @@ def bump_and_maybe_log():
 
 
 # ===== /srv：接收图片并落盘（线程池执行写盘） =====
+@app.post("/recv_sub_req_meta")
+def recv_sub_req_meta():
+    payload = request.get_json(force=True, silent=True) or {}
+    sub_req_id = payload.get("sub_req_id")
+    req_id = payload.get("req_id")
+    sub_req_count = payload.get("sub_req_count")
+    if not isinstance(sub_req_id, str) or not sub_req_id.strip():
+        return build_failed("sub_req_id required")
+    if not isinstance(req_id, str) or not req_id.strip():
+        return build_failed("req_id required")
+    if not isinstance(sub_req_count, int) or sub_req_count <= 0:
+        return build_failed("sub_req_count must be positive int")
+
+    entry = {
+        "req_id": req_id,
+        "sub_req_id": sub_req_id,
+        "sub_req_count": sub_req_count,
+        "tasktype": payload.get("tasktype", "Unknown"),
+        "dst_device_id": payload.get("dst_device_id", ""),
+        "dst_device_ip": payload.get("dst_device_ip", ""),
+        "enqueue_time_ms": payload.get("enqueue_time_ms", 0),
+        "meta_time": time.time(),
+        "start_time_ms": None,
+        "expected_end_time_ms": 0,
+        "queue_len_at_start": None,
+        "client_ip": "",
+        "service": "",
+    }
+    with SUB_REQ_LOCK:
+        SUB_REQS[sub_req_id] = entry
+    _write_sub_req_file(entry)
+
+    cfg = _load_slave_backend_config(PROJECT_ROOT)
+    service_name = _resolve_service_name(entry.get("tasktype", "Unknown"), cfg)
+    entry["service"] = service_name
+    svc_entry = _get_service_entry(cfg, service_name)
+    input_root = _resolve_path(PROJECT_ROOT, svc_entry.get("input_dir", f"workspace/slave/data/input/{service_name}"))
+    if not input_root:
+        input_root = os.path.join(DATA_ROOT, service_name, "input")
+    staging_root = os.path.join(input_root, "_sub_reqs", _safe_name(sub_req_id))
+    os.makedirs(staging_root, exist_ok=True)
+
+    with SUB_REQ_QUEUE_LOCK:
+        SUB_REQ_QUEUE.setdefault(service_name, []).append(sub_req_id)
+    SUB_REQ_STATE[sub_req_id] = {
+        "expected": sub_req_count,
+        "received": 0,
+        "service_name": service_name,
+        "input_root": input_root,
+        "staging_root": staging_root,
+    }
+    _ensure_worker(service_name)
+
+    return build_success({"sub_req_id": sub_req_id})
+
+
 @app.post("/recv_task")
 def srv():
     if not request.content_type or "multipart/form-data" not in request.content_type:
@@ -237,7 +422,25 @@ def srv():
     input_root = _resolve_path(PROJECT_ROOT, entry.get("input_dir", f"workspace/slave/data/input/{service_name}"))
     if not input_root:
         input_root = os.path.join(DATA_ROOT, service_name, "input")
-    dir_path = os.path.join(input_root, src_ip)
+    sub_req_id = meta.get("sub_req_id")
+    req_id = meta.get("req_id", "")
+    target_root = input_root
+    if isinstance(sub_req_id, str) and sub_req_id.strip():
+        with SUB_REQ_LOCK:
+            sub_req = SUB_REQS.get(sub_req_id)
+            if sub_req and sub_req.get("start_time_ms") is None:
+                sub_req["start_time_ms"] = int(time.time() * 1000)
+                sub_req["queue_len_at_start"] = _count_pending_files(input_root)
+                if not sub_req.get("client_ip"):
+                    sub_req["client_ip"] = src_ip
+                _write_sub_req_file(sub_req)
+        with SUB_REQ_QUEUE_LOCK:
+            state = SUB_REQ_STATE.get(sub_req_id)
+            if state and state.get("staging_root"):
+                target_root = state["staging_root"]
+                state["received"] = int(state.get("received") or 0) + 1
+        _append_task_map(file_name, sub_req_id, req_id, tasktype, src_ip)
+    dir_path = os.path.join(target_root, src_ip)
     final_path = os.path.join(dir_path, os.path.basename(file_name))
     tmp_path = final_path + ".part"
 
