@@ -49,6 +49,8 @@ SUB_REQ_QUEUE_LOCK = threading.Lock()
 SUB_REQ_QUEUE = {}
 SUB_REQ_STATE = {}
 SUB_REQ_WORKERS = {}
+SUB_REQ_SEQ_LOCK = threading.Lock()
+SUB_REQ_SEQ = {}
 
 _SLAVE_BACKEND_CONFIG_PATH = ""
 _AGENT_CONTROL_PORT = 8000
@@ -125,6 +127,16 @@ def _get_service_entry(cfg: dict, service_name: str) -> dict:
             return v
     return {}
 
+def _next_sub_req_seq(service_name: str) -> int:
+    with SUB_REQ_SEQ_LOCK:
+        cur = int(SUB_REQ_SEQ.get(service_name, 0))
+        cur += 1
+        SUB_REQ_SEQ[service_name] = cur
+        return cur
+
+def _sub_req_dir_name(seq: int, sub_req_id: str) -> str:
+    return f"{seq:012d}__{_safe_name(sub_req_id)}"
+
 def _safe_name(raw: str) -> str:
     out = []
     for ch in raw:
@@ -167,38 +179,25 @@ def _resolve_service_name(tasktype: str, cfg: dict) -> str:
         service_name = "Unknown"
     return service_name
 
-def _move_sub_req_files(state: dict) -> None:
+def _promote_sub_req(state: dict) -> bool:
     staging_root = state.get("staging_root")
-    input_root = state.get("input_root")
-    if not staging_root or not input_root:
-        return
-    for dirpath, _, filenames in os.walk(staging_root):
-        rel = os.path.relpath(dirpath, staging_root)
-        if rel == ".":
-            rel = ""
-        target_dir = os.path.join(input_root, rel)
-        os.makedirs(target_dir, exist_ok=True)
-        for name in filenames:
-            if name.endswith(".part"):
-                continue
-            src = os.path.join(dirpath, name)
-            dst = os.path.join(target_dir, name)
-            os.replace(src, dst)
+    ready_root = state.get("ready_root")
+    if not staging_root or not ready_root:
+        return False
+    if state.get("promoted"):
+        return True
+    if os.path.isdir(ready_root):
+        state["staging_root"] = ready_root
+        state["promoted"] = True
+        return True
     try:
-        for root, dirs, files in os.walk(staging_root, topdown=False):
-            for name in files:
-                try:
-                    os.remove(os.path.join(root, name))
-                except Exception:
-                    pass
-            for name in dirs:
-                try:
-                    os.rmdir(os.path.join(root, name))
-                except Exception:
-                    pass
-        os.rmdir(staging_root)
+        os.makedirs(os.path.dirname(ready_root), exist_ok=True)
+        os.replace(staging_root, ready_root)
+        state["staging_root"] = ready_root
+        state["promoted"] = True
+        return True
     except Exception:
-        pass
+        return False
 
 def _sub_req_worker(service_name: str):
     while True:
@@ -217,10 +216,11 @@ def _sub_req_worker(service_name: str):
             continue
         expected = int(state.get("expected") or 0)
         received = int(state.get("received") or 0)
+        if received > 0:
+            _promote_sub_req(state)
         if expected <= 0 or received < expected:
             time.sleep(0.05)
             continue
-        _move_sub_req_files(state)
         with SUB_REQ_QUEUE_LOCK:
             queue = SUB_REQ_QUEUE.get(service_name, [])
             if queue and queue[0] == sub_req_id:
@@ -332,7 +332,11 @@ def recv_sub_req_meta():
     input_root = _resolve_path(PROJECT_ROOT, svc_entry.get("input_dir", f"workspace/slave/data/input/{service_name}"))
     if not input_root:
         input_root = os.path.join(DATA_ROOT, service_name, "input")
-    staging_root = os.path.join(input_root, "_sub_reqs", _safe_name(sub_req_id))
+    seq = _next_sub_req_seq(service_name)
+    sub_dir_name = _sub_req_dir_name(seq, sub_req_id)
+    service_dir = _safe_name(service_name)
+    staging_root = os.path.join(input_root, "_sub_reqs_pending", service_dir, sub_dir_name)
+    ready_root = os.path.join(input_root, "_sub_reqs_ready", service_dir, sub_dir_name)
     os.makedirs(staging_root, exist_ok=True)
 
     with SUB_REQ_QUEUE_LOCK:
@@ -343,6 +347,9 @@ def recv_sub_req_meta():
         "service_name": service_name,
         "input_root": input_root,
         "staging_root": staging_root,
+        "ready_root": ready_root,
+        "seq": seq,
+        "promoted": False,
     }
     _ensure_worker(service_name)
 

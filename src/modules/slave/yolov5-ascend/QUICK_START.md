@@ -27,16 +27,17 @@ python detect_yolov5_ascend.py \
 
 ```bash
 # Simulate 10 IPs sending 100 images each
+mkdir -p ./input/_sub_reqs_ready/YoloV5/000000000001__req_demo_0
 python simulate_image_sender.py \
     --source-dir /path/to/test/images \
-    --target-dir ./input
+    --target-dir ./input/_sub_reqs_ready/YoloV5/000000000001__req_demo_0
 ```
 
 ## Input/Output Format Summary
 
 ### Input Format
 ```
-input/192.168.1.1/image.tif
+input/_sub_reqs_ready/YoloV5/000000000001__req_demo_0/192.168.1.1/image.tif
 ```
 
 ### Output Format (--output-format=all)
@@ -62,7 +63,7 @@ output/image/192.168.1.1/image.tif
 - ✅ Configurable output (label/image/both)
 - ✅ Safe file transfer detection
 - ✅ Auto-deletion after processing
-- ✅ Preserves IPv4 folder structure
+- ✅ Preserves sub-req + IPv4 folder structure
 - ✅ Full --help documentation
 
 ## Get Help

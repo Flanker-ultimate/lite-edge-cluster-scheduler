@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import time
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -474,6 +475,27 @@ def get_all_images_in_directory(directory):
     return image_files
 
 
+def get_sub_req_dirs_sorted(ready_root: str):
+    if not os.path.isdir(ready_root):
+        return []
+    sub_dirs = []
+    for name in os.listdir(ready_root):
+        full_path = os.path.join(ready_root, name)
+        if os.path.isdir(full_path):
+            sub_dirs.append(full_path)
+    sub_dirs.sort()
+    return sub_dirs
+
+
+def has_any_files(directory: str) -> bool:
+    for _, _, files in os.walk(directory):
+        for name in files:
+            if name.endswith(".part"):
+                continue
+            return True
+    return False
+
+
 def is_file_ready(file_path, stability_check_interval=0.01, max_wait=5.0):
     """
     Check if a file is completely written by monitoring size stability.
@@ -669,17 +691,55 @@ if __name__ == "__main__":
 
         total_processed = 0
         scan_count = 0
+        idle_logs = 0
+        service_name_hint = ""
+        try:
+            if input_dir.name.lower() == "input":
+                service_name_hint = input_dir.parent.name
+        except Exception:
+            service_name_hint = ""
 
         # Continuous scanning loop
         while True:
             scan_count += 1
 
-            # Scan for all images in input directory
-            image_list = get_all_images_in_directory(str(input_dir))
+            ready_root = os.path.join(str(input_dir), "_sub_reqs_ready")
+            service_dirs = get_sub_req_dirs_sorted(ready_root)
+            if service_name_hint:
+                hinted = os.path.join(ready_root, service_name_hint)
+                if os.path.isdir(hinted):
+                    service_dirs = [hinted]
+            current_sub_req_dir = ""
+            if not service_dirs:
+                idle_logs += 1
+                if idle_logs % 30 == 0:
+                    print(
+                        f"[Scan #{scan_count}] No sub-reqs ready in {ready_root}"
+                    )
+                time.sleep(opt.scan_interval)
+                continue
+            idle_logs = 0
+            service_dir = service_dirs[0]
+            sub_req_dirs = get_sub_req_dirs_sorted(service_dir)
+            if not sub_req_dirs:
+                time.sleep(opt.scan_interval)
+                continue
+            sub_req_dir = sub_req_dirs[0]
+            current_sub_req_dir = sub_req_dir
+            image_list = get_all_images_in_directory(sub_req_dir)
+            if len(image_list) > 0:
+                print(
+                    f"\n[Scan #{scan_count}] Sub-req dir: {os.path.basename(sub_req_dir)} "
+                    f"({len(image_list)} images)"
+                )
+            else:
+                if not has_any_files(sub_req_dir):
+                    shutil.rmtree(sub_req_dir, ignore_errors=True)
+                time.sleep(opt.scan_interval)
+                continue
+            active_input_dir = Path(sub_req_dir)
 
             if len(image_list) > 0:
-                print(f"\n[Scan #{scan_count}] Found {len(image_list)} images")
-
                 # Process each image
                 batch_start_time = time.perf_counter()
                 skipped_count = 0
@@ -717,7 +777,7 @@ if __name__ == "__main__":
                             max_det,
                             fileter_classes,
                             opt,
-                            input_dir,
+                            active_input_dir,
                             output_dir,
                         )
 
@@ -742,6 +802,8 @@ if __name__ == "__main__":
                         f"Processed: {len(image_list) - skipped_count}/{len(image_list)} images ({skipped_count} skipped)"
                     )
                 print(f"Total processed: {total_processed} images")
+                if current_sub_req_dir and not has_any_files(current_sub_req_dir):
+                    shutil.rmtree(current_sub_req_dir, ignore_errors=True)
 
             # Wait before next scan
             time.sleep(opt.scan_interval)

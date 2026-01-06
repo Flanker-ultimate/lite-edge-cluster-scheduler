@@ -150,7 +150,7 @@ python3 src/modules/slave/recv_server.py --config config_files/slave_backend.jso
 - `--config`：`slave_backend.json` 路径（默认读取 `config_files/slave_backend.json`）
 - `--agent-port`：agent 控制端口（用于 `POST /ensure_service`，默认 8000）
 
-recv_server 会读取 `config_files/slave_backend.json`，按服务(tasktype)落盘到 `input_dir/<ip>/...`；后端（binary/container）的启动/守护统一由 agent 负责。
+recv_server 会读取 `config_files/slave_backend.json`，按服务(tasktype)落盘到 `input_dir/_sub_reqs_ready/<ServiceName>/<seq>__<sub_req_id>/<ip>/...`；后端（binary/container）的启动/守护统一由 agent 负责。
 前提：`tasktype` 与 `service` 名字完全一致（大小写也一致），即“一个 tasktype 对应唯一一个 service”。
 
 #### `slave_backend.json` 字段说明（核心）
@@ -159,14 +159,19 @@ recv_server 会读取 `config_files/slave_backend.json`，按服务(tasktype)落
   - `container`: 由 `agent` 启动/守护 `start_cmd` 指定的容器启动命令（容器内需按 `INPUT_DIR/OUTPUT_DIR` 约定循环处理）
   - `local`: 仅落盘，不负责启动后端（你可自行在 slave 上启动对应进程）
 - `services.<ServiceName>.agent_autostart`: 是否在 agent 启动时就同步启动该 service 的后端（默认按需在首次收到任务时启动）
-- `services.<ServiceName>.input_dir`: 该 service 的输入根目录；实际任务文件会写入 `input_dir/<client_ip>/<filename>`
+- `services.<ServiceName>.input_dir`: 该 service 的输入根目录；实际任务文件会写入 `input_dir/_sub_reqs_ready/<ServiceName>/<seq>__<sub_req_id>/<client_ip>/<filename>`
 - `services.<ServiceName>.output_dir`: 该 service 的输出根目录（由后端写入处理结果）
 - `services.<ServiceName>.result_dir`: `rst_send` 扫描并回传结果的目录（通常是 `output_dir/label`）
 - `services.<ServiceName>.start_cmd`: 当 `backend` 为 `binary/container` 时必填，支持占位符 `${INPUT_DIR}`、`${OUTPUT_DIR}`、`${SERVICE_NAME}`
 
 #### slave 侧目录约定（推荐）
-- `workspace/slave/data/<ServiceName>/input/<client_ip>/...`：recv_server 落盘的输入
+- `workspace/slave/data/<ServiceName>/input/_sub_reqs_ready/<ServiceName>/<seq>__<sub_req_id>/<client_ip>/...`：recv_server 落盘的输入（按 sub_req 顺序）
 - `workspace/slave/data/<ServiceName>/output/...`：后端输出根目录（result_dir 在此目录下的某个子目录）
+
+#### slave 处理逻辑（sub_req FIFO）
+- recv_server 在收到 `/recv_sub_req_meta` 后会为对应 service 入队，并创建 `_sub_reqs_pending/<ServiceName>/<seq>__<sub_req_id>` 目录。
+- 当该 sub_req 位于队首且收到首个 task 文件时，会立即将目录提升到 `_sub_reqs_ready/<ServiceName>/<seq>__<sub_req_id>`，后端可开始处理（不必等待收齐）。
+- recv_server 会继续接收剩余 task，并写入同一 ready 目录；收到数量达到 `sub_req_count` 后才出队。
 
 #### slave 侧日志约定
 - `workspace/slave/log/agent.log`：agent 日志（注册、ensure_service、进程启动/重启等）

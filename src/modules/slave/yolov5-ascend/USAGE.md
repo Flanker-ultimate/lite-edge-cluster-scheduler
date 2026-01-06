@@ -18,7 +18,7 @@ This system provides continuous YOLOv5 object detection on Huawei Ascend NPU wit
 - ✅ Continuous directory scanning
 - ✅ Automatic batch processing
 - ✅ Configurable output formats (label/image/all)
-- ✅ IPv4-based folder structure support
+- ✅ Sub-request directory FIFO support
 - ✅ Automatic image deletion after processing
 - ✅ Transfer completion safeguards
 - ✅ Full command-line help
@@ -29,7 +29,7 @@ This system provides continuous YOLOv5 object detection on Huawei Ascend NPU wit
 
 | Argument | Type | Description |
 |----------|------|-------------|
-| `--input-dir` | string | Input directory where IPv4-named folders with images will be created |
+| `--input-dir` | string | Input root directory; scans `_sub_reqs_ready/<ServiceName>/<seq>__<sub_req_id>/...` under this path |
 | `--output-dir` | string | Output directory for inference results |
 
 #### Output Control
@@ -112,15 +112,13 @@ python detect_yolov5_ascend.py \
 #### Input Structure
 ```
 input/
-├── 192.168.1.100/
-│   ├── image_0001.tif
-│   ├── image_0002.tif
-│   └── image_0003.tif
-├── 10.0.0.50/
-│   ├── photo_001.jpg
-│   └── photo_002.jpg
-└── 172.16.0.10/
-    └── sample.png
+  _sub_reqs_ready/
+    YoloV5/
+      000000000001__req_demo_0/
+        192.168.1.100/
+          image_0001.tif
+        10.0.0.50/
+          photo_001.jpg
 ```
 
 #### Output Structure (when --output-format=all)
@@ -184,11 +182,11 @@ Example:
 ### Workflow
 
 1. **Initialization**: Creates input/output directories, loads model
-2. **Scanning Loop**: Continuously scans input directory for images
+2. **Scanning Loop**: Continuously scans `_sub_reqs_ready` and processes the lowest seq sub-req dir
 3. **Stability Check**: Verifies each file is completely transferred by monitoring size stability
 4. **Batch Processing**: Processes all ready images
 5. **Result Saving**: Saves labels/images based on `--output-format`
-6. **Cleanup**: Deletes processed images from input directory
+6. **Cleanup**: Deletes processed images and removes empty sub-req directories
 7. **Repeat**: Returns to step 2
 
 ### Stopping the Script
@@ -210,7 +208,7 @@ Simulates an external program that sends images to the input directory for testi
 | Argument | Type | Description |
 |----------|------|-------------|
 | `--source-dir` | string | Source directory containing images to send |
-| `--target-dir` | string | Target input directory where IPv4 folders will be created |
+| `--target-dir` | string | Target sub-req directory (e.g., `<input_dir>/_sub_reqs_ready/<ServiceName>/<seq>__<sub_req_id>`) |
 
 #### Optional Arguments
 
@@ -227,7 +225,7 @@ Simulates an external program that sends images to the input directory for testi
 ```bash
 python simulate_image_sender.py \
     --source-dir ./test_images \
-    --target-dir ./input \
+    --target-dir ./input/_sub_reqs_ready/YoloV5/000000000001__req_demo_0 \
     --num-ips 5 \
     --num-images 50
 ```
@@ -236,7 +234,7 @@ python simulate_image_sender.py \
 ```bash
 python simulate_image_sender.py \
     --source-dir /data/images \
-    --target-dir /data/input \
+    --target-dir /data/input/_sub_reqs_ready/YoloV5/000000000001__req_demo_0 \
     --num-ips 10 \
     --num-images 100 \
     --send-interval 0.1 \
@@ -247,7 +245,7 @@ python simulate_image_sender.py \
 ```bash
 python simulate_image_sender.py \
     --source-dir ./images \
-    --target-dir ./input \
+    --target-dir ./input/_sub_reqs_ready/YoloV5/000000000001__req_demo_0 \
     --num-ips 20 \
     --num-images 200 \
     --send-interval 0.01
@@ -289,7 +287,7 @@ python detect_yolov5_ascend.py \
 ```bash
 python simulate_image_sender.py \
     --source-dir ./test_images \
-    --target-dir ./input \
+    --target-dir ./input/_sub_reqs_ready/YoloV5/000000000001__req_demo_0 \
     --num-ips 10 \
     --num-images 100 \
     --send-interval 0.05
@@ -358,7 +356,7 @@ Press `Ctrl+C` in Terminal 1 when testing is complete.
 
 ## Notes
 
-1. **Image Deletion**: Processed images are automatically deleted from the input directory
+1. **Image Deletion**: Processed images are automatically deleted from the sub-req directory
 2. **Supported Formats**: .jpg, .jpeg, .png, .bmp, .tif, .tiff
 3. **Thread Safety**: Single-threaded design ensures predictable behavior
 4. **Error Handling**: Failed images are logged but don't stop processing
