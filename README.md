@@ -240,6 +240,7 @@ python3 ./src/modules/client/req_send.py \
     --max=200 \
     --workers=8
 ```
+说明：不加 `--batch` 仍是逐张发送；加 `--batch` 会通过 gRPC 批量上传并一次性调度。
 说明：`--tasktype` 用于指定该任务希望由哪个服务（服务名=tasktype）处理；master 会携带该字段转发，scheduler 会按 tasktype 选择支持该服务的 slave。
 
 ## ⚙️ 调度策略配置

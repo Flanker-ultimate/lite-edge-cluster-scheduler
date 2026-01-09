@@ -94,6 +94,12 @@ def parse_ascend_dmi_output(output: str) -> dict:
         if len(parts) != 2:
             continue
         key, value = parts[0].strip(), parts[1].strip()
+        if key.startswith("Temperature"):
+            try:
+                npu_data["temperature_c"] = float(value.split()[0])
+            except ValueError:
+                pass
+            continue
         if current_section == "AI Core Information":
             if key == "AI Core Usage (%)":
                 try:
@@ -125,12 +131,6 @@ def parse_ascend_dmi_output(output: str) -> dict:
             elif key == "Bandwidth Usage (%)":
                 try:
                     npu_data["memory_info"]["bandwidth_usage_percent"] = int(value)
-                except ValueError:
-                    pass
-        elif current_section == "Temperature (C)":
-            if key == "Temperature (C)":
-                try:
-                    npu_data["temperature_c"] = float(value)
                 except ValueError:
                     pass
     return npu_data
@@ -188,7 +188,10 @@ class MetricsSampler:
         down_kb = (net_now.bytes_recv - self._last_net.bytes_recv) / 1024.0
         self._last_net = net_now
         npu = collect_npu_metrics()
-        load_state = read_load_sim_state(LOAD_SIM_STATE_FILE)
+        if "read_load_sim_state" in globals():
+            load_state = read_load_sim_state(LOAD_SIM_STATE_FILE)
+        else:
+            load_state = {}
         return {
             "timestamp_ms": int(time.time() * 1000),
             "host_cpu_util": cpu,

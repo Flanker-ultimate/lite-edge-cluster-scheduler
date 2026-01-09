@@ -46,6 +46,32 @@ def upload_one(stub: grpc.Channel, filename: str, tasktype: str = "YoloV5") -> T
         return os.path.basename(filename), -1, f"error: {exc}"
 
 
+def upload_batch(stub: grpc.Channel, files: List[str], tasktype: str, req_id: str = "") -> Tuple[int, str]:
+    total_num = len(files)
+
+    def payload_iter():
+        for idx, filename in enumerate(files):
+            with open(filename, "rb") as f:
+                content_b64 = base64.b64encode(f.read()).decode("ascii")
+            payload = {
+                "filename": os.path.basename(filename),
+                "content_b64": content_b64,
+                "tasktype": tasktype,
+            }
+            if req_id:
+                payload["req_id"] = req_id
+            if idx == 0:
+                payload["total_num"] = total_num
+            yield json.dumps(payload).encode("utf-8")
+
+    try:
+        resp_bytes = stub.stream_unary("/ImageUpload/UploadImages")(payload_iter())
+        resp = json.loads(resp_bytes.decode("utf-8"))
+        return resp.get("saved_count", 0), "ok"
+    except Exception as exc:
+        return -1, f"error: {exc}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="gRPC request sender (service-aware)")
     parser.add_argument("-n", "--max", type=int, default=None, help="limit max files to send")
@@ -64,6 +90,8 @@ def main() -> None:
         help="client data root directory (default: workspace/client/data)",
     )
     parser.add_argument("--tasktype", default="YoloV5", help="service/task type (e.g. YoloV5, Bert, ...)")
+    parser.add_argument("--batch", action="store_true", help="send all files as one gRPC batch")
+    parser.add_argument("--req-id", default="", help="optional req_id for batch mode")
     args = parser.parse_args()
 
     root_dir = args.root
@@ -96,11 +124,15 @@ def main() -> None:
             ("grpc.max_receive_message_length", 128 * 1024 * 1024),
         ],
     ) as channel:
-        with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            futures_map = {executor.submit(upload_one, channel, p, args.tasktype): p for p in files}
-            for fut in as_completed(futures_map):
-                name, status, msg = fut.result()
-                print(f"sent {name} -> status={status}, resp={msg}")
+        if args.batch:
+            saved_count, msg = upload_batch(channel, files, args.tasktype, req_id=args.req_id)
+            print(f"batch sent {len(files)} files -> saved_count={saved_count}, resp={msg}")
+        else:
+            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+                futures_map = {executor.submit(upload_one, channel, p, args.tasktype): p for p in files}
+                for fut in as_completed(futures_map):
+                    name, status, msg = fut.result()
+                    print(f"sent {name} -> status={status}, resp={msg}")
 
 
 if __name__ == "__main__":
