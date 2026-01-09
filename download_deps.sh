@@ -20,10 +20,13 @@ download_and_extract() {
     echo "------------------------------------------------"
     echo "处理: $target_name"
 
-    if [ -d "$target_name" ]; then
-        echo "目录 $target_name 已存在，跳过。"
+    if [ -d "$target_name" ] && [ "$(ls -A "$target_name")" ]; then
+        echo "目录 $target_name 已存在且非空，跳过。"
         return
     fi
+
+    # 目录存在但为空时，清理后重新下载
+    rm -rf "$target_name"
 
     filename="${target_name}.zip"
 
