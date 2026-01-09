@@ -140,6 +140,23 @@ agent 默认会在注册成功后启动并守护 `slave-recv_server` 与 `slave-
 - `--disconnect`: 断开重连间隔（秒）
 - `--reconnect`: 重试间隔（秒）
 
+**agent_services.json (自启动参数可配)**
+- `recv_server_cmd` / `rst_send_cmd` 就是 agent 实际执行的命令，可在此追加参数（如 CSV/采样控制）。
+- 示例：开启 CSV 并自定义采样间隔/输出路径
+```json
+{
+  "rst_send_cmd": "{PYTHON} src/modules/slave/rst_send.py --config config_files/slave_backend.json --input-dir workspace/slave/data --interval 5 --target-port 8888 --gateway-host {MASTER_IP} --gateway-port {MASTER_PORT} --device-id {DEVICE_ID} --enable-csv --csv-path workspace/slave/log/sub_req_metrics.csv --sample-interval 3"
+}
+```
+- 常用参数参考（rst_send）：
+  - `--enable-csv/--disable-csv`: 开关 `sub_req_metrics.csv`
+  - `--csv-path`: CSV 输出路径
+  - `--sample-interval`: 采样间隔（秒）
+- 常用参数参考（recv_server）：
+  - `--config`: `slave_backend.json` 路径
+  - `--agent-port`: agent 控制端口（默认 8000）
+- 如果 CSV 指标全为 0，先看 `workspace/slave/log/rst_send.log` 里的 `[metrics]` 提示，并确认 `ascend-dmi` 可执行/权限正常。
+
 ### 4【可选】启动接收服务器（Receive Server）
 ```bash
 python3 src/modules/slave/recv_server.py --config config_files/slave_backend.json

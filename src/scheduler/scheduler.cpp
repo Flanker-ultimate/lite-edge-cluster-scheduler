@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <boost/uuid/nil_generator.hpp>
+#include <boost/uuid/uuid_io.hpp>
 std::map<TaskType, std::map<DeviceType, StaticInfoItem> > Docker_scheduler::static_info; // static task info
 TaskQueueManager Docker_scheduler::task_queue_manager_;
 
@@ -24,6 +25,7 @@ std::map<DeviceID, std::vector<TaskType>> Docker_scheduler::device_active_servic
 // std::shared_mutex Docker_scheduler::td_map_mutex_; // Thread-safe mutex for TDMap
 std::map<TaskType, std::map<DeviceID, DevSrvInfos> > Docker_scheduler::tdMap;
 std::once_flag Docker_scheduler::scheduler_loop_once_flag_;
+RequestTracker Docker_scheduler::request_tracker_;
 // onnx
 //Ort::Env Docker_scheduler::env(ORT_LOGGING_LEVEL_WARNING, "OnnxModel");
 //Ort::Session* Docker_scheduler::onnx_session = nullptr;
@@ -34,6 +36,21 @@ namespace {
 int64_t NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+const char *ProgressStatusToString(TaskProgressStatus status) {
+    switch (status) {
+        case TaskProgressStatus::WAITING:
+            return "waiting";
+        case TaskProgressStatus::RUNNING:
+            return "processing";
+        case TaskProgressStatus::RESULT_READY:
+            return "result_ready";
+        case TaskProgressStatus::SENT:
+            return "sent";
+        default:
+            return "unknown";
+    }
 }
 
 SubRequest MakeSingleSubRequest(const ImageTask &task) {
@@ -49,6 +66,180 @@ SubRequest MakeSingleSubRequest(const ImageTask &task) {
     return sub_req;
 }
 } // namespace
+
+RequestTracker &Docker_scheduler::GetRequestTracker() {
+    return request_tracker_;
+}
+
+void RequestTracker::OnClientRequest(const ClientRequest &req) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ReqProgress &entry = reqs_[req.req_id];
+    entry.req_id = req.req_id;
+    entry.client_ip = req.client_ip;
+    entry.total = req.total_num;
+    entry.tasktype = req.task_type == TaskType::Unknown ? "Unknown" : to_string(nlohmann::json(req.task_type));
+    for (const auto &task : req.tasks) {
+        TaskProgress &tp = tasks_[task.task_id];
+        tp.task_id = task.task_id;
+        tp.req_id = req.req_id;
+    }
+}
+
+void RequestTracker::OnSubRequestAllocated(const SubRequest &sub_req) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    SubReqProgress &sr = sub_reqs_[sub_req.sub_req_id];
+    sr.sub_req_id = sub_req.sub_req_id;
+    sr.req_id = sub_req.req_id;
+    sr.client_ip = sub_req.client_ip;
+    sr.device_id = boost::uuids::to_string(sub_req.dst_device_id);
+    sr.device_ip = sub_req.dst_device_ip;
+    sr.task_ids.clear();
+    for (const auto &task : sub_req.tasks) {
+        sr.task_ids.push_back(task.task_id);
+        TaskProgress &tp = tasks_[task.task_id];
+        tp.task_id = task.task_id;
+        tp.req_id = sub_req.req_id;
+        tp.sub_req_id = sub_req.sub_req_id;
+        tp.device_id = sr.device_id;
+        tp.device_ip = sr.device_ip;
+    }
+    ReqProgress &req = reqs_[sub_req.req_id];
+    if (req.req_id.empty()) {
+        req.req_id = sub_req.req_id;
+        req.client_ip = sub_req.client_ip;
+        req.total = sub_req.sub_req_count;
+        req.tasktype = sub_req.task_type == TaskType::Unknown ? "Unknown" : to_string(nlohmann::json(sub_req.task_type));
+    }
+    if (std::find(req.sub_req_ids.begin(), req.sub_req_ids.end(), sub_req.sub_req_id) ==
+        req.sub_req_ids.end()) {
+        req.sub_req_ids.push_back(sub_req.sub_req_id);
+    }
+}
+
+void RequestTracker::OnTaskRunning(const std::string &task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tasks_.find(task_id);
+    if (it == tasks_.end()) {
+        return;
+    }
+    it->second.status = TaskProgressStatus::RUNNING;
+}
+
+void RequestTracker::OnTaskResultReady(const std::string &task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tasks_.find(task_id);
+    if (it == tasks_.end()) {
+        return;
+    }
+    if (it->second.status != TaskProgressStatus::SENT) {
+        it->second.status = TaskProgressStatus::RESULT_READY;
+    }
+}
+
+void RequestTracker::OnTaskSent(const std::string &task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tasks_.find(task_id);
+    if (it == tasks_.end()) {
+        return;
+    }
+    it->second.status = TaskProgressStatus::SENT;
+}
+
+json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    json out;
+    out["client_ip"] = client_ip;
+    json reqs = json::array();
+    for (const auto &pair : reqs_) {
+        const ReqProgress &req = pair.second;
+        if (!client_ip.empty() && req.client_ip != client_ip) {
+            continue;
+        }
+        json req_json;
+        req_json["req_id"] = req.req_id;
+        req_json["client_ip"] = req.client_ip;
+        req_json["tasktype"] = req.tasktype;
+        req_json["total"] = req.total;
+        int sent_count = 0;
+        int running_count = 0;
+        int ready_count = 0;
+        int waiting_count = 0;
+        json sub_arr = json::array();
+        for (const auto &sub_id : req.sub_req_ids) {
+            auto sub_it = sub_reqs_.find(sub_id);
+            if (sub_it == sub_reqs_.end()) {
+                continue;
+            }
+            const SubReqProgress &sub = sub_it->second;
+            int sub_sent = 0;
+            int sub_running = 0;
+            int sub_ready = 0;
+            int sub_waiting = 0;
+            json task_arr = json::array();
+            for (const auto &task_id : sub.task_ids) {
+                auto task_it = tasks_.find(task_id);
+                if (task_it == tasks_.end()) {
+                    continue;
+                }
+                const TaskProgress &tp = task_it->second;
+                if (tp.status == TaskProgressStatus::SENT) {
+                    sub_sent++;
+                } else if (tp.status == TaskProgressStatus::RESULT_READY) {
+                    sub_ready++;
+                } else if (tp.status == TaskProgressStatus::RUNNING) {
+                    sub_running++;
+                } else {
+                    sub_waiting++;
+                }
+                json task_json;
+                task_json["task_id"] = tp.task_id;
+                task_json["status"] = ProgressStatusToString(tp.status);
+                task_arr.push_back(task_json);
+            }
+            sent_count += sub_sent;
+            running_count += sub_running;
+            ready_count += sub_ready;
+            waiting_count += sub_waiting;
+            std::string sub_status;
+            if (!sub.task_ids.empty() && sub_sent == static_cast<int>(sub.task_ids.size())) {
+                sub_status = "completed";
+            } else if (sub_running > 0 || sub_ready > 0 || sub_sent > 0) {
+                sub_status = "processing";
+            } else {
+                sub_status = "waiting";
+            }
+            json sub_json;
+            sub_json["sub_req_id"] = sub.sub_req_id;
+            sub_json["device_id"] = sub.device_id;
+            sub_json["device_ip"] = sub.device_ip;
+            sub_json["total"] = static_cast<int>(sub.task_ids.size());
+            sub_json["waiting"] = sub_waiting;
+            sub_json["processing"] = sub_running;
+            sub_json["result_ready"] = sub_ready;
+            sub_json["sent"] = sub_sent;
+            sub_json["status"] = sub_status;
+            sub_json["tasks"] = task_arr;
+            sub_arr.push_back(sub_json);
+        }
+        std::string req_status;
+        if (req.total > 0 && sent_count == req.total) {
+            req_status = "completed";
+        } else if (running_count > 0 || ready_count > 0 || sent_count > 0) {
+            req_status = "processing";
+        } else {
+            req_status = "waiting";
+        }
+        req_json["waiting"] = waiting_count;
+        req_json["processing"] = running_count;
+        req_json["result_ready"] = ready_count;
+        req_json["sent"] = sent_count;
+        req_json["status"] = req_status;
+        req_json["sub_reqs"] = sub_arr;
+        reqs.push_back(req_json);
+    }
+    out["reqs"] = reqs;
+    return out;
+}
 
 std::optional<SubRequest> TaskQueueManager::PopPending() {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -75,6 +266,7 @@ bool TaskQueueManager::AddRunningTask(const DeviceID &device_id, const ImageTask
     ImageTask running_task = task;
     running_task.status = TaskStatus::RUNNING;
     running_index_[device_id].push_back(running_task);
+    Docker_scheduler::GetRequestTracker().OnTaskRunning(task.task_id);
     return true;
 }
 
@@ -93,6 +285,7 @@ std::optional<ImageTask> TaskQueueManager::CompleteTaskAndGet(const std::string 
             if (id_match || stem_match) {
                 ImageTask completed = *it;
                 task_list.erase(it);
+                Docker_scheduler::GetRequestTracker().OnTaskSent(reported_task_id);
                 return completed;
             }
         }
@@ -308,6 +501,7 @@ std::vector<SubRequest> Docker_scheduler::AllocateSubRequests(const ClientReques
         }
         sub_req.sub_req_count = static_cast<int>(sub_req.tasks.size());
         sub_reqs.push_back(sub_req);
+        Docker_scheduler::GetRequestTracker().OnSubRequestAllocated(sub_req);
     }
 
     return sub_reqs;

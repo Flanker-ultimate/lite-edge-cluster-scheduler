@@ -6,7 +6,7 @@
       "input_dir": "workspace/slave/data/YoloV5/input",
       "output_dir": "workspace/slave/data/YoloV5/output",
       "result_dir": "workspace/slave/data/YoloV5/output/label",
-      "start_cmd": "python3 src/modules/slave/task_dealer/可执行程序/yolov5-ascend/detect_yolov5_ascend.py --input-dir ${INPUT_DIR} --output-dir ${OUTPUT_DIR} --output-format all"
+      "start_cmd": "python3 src/modules/slave/task_dealer/executor/yolov5-ascend/detect_yolov5_ascend.py --input-dir ${INPUT_DIR} --output-dir ${OUTPUT_DIR} --output-format all"
     }
   },
   "default_service": "YoloV5"

@@ -16,6 +16,8 @@ const std::string HOTSTART_ROUTE = "/hot_start";
 const std::string SCHEDULE_ROUTE = "/schedule";
 const std::string DISCONNECT_NODE_ROUTE = "/unregister_node";
 const std::string TASK_COMPLETED_ROUTE = "/task_completed";
+const std::string TASK_RESULT_READY_ROUTE = "/task_result_ready";
+const std::string REQ_TREE_ROUTE = "/req_tree";
 
 class HttpServer {
 public:
@@ -29,6 +31,8 @@ private:
     static void HandleSchedule(const httplib::Request &req, httplib::Response &res);
     static void HandleDisconnect(const httplib::Request &req, httplib::Response &res);
     static void HandleTaskCompleted(const httplib::Request &req, httplib::Response &res);
+    static void HandleTaskResultReady(const httplib::Request &req, httplib::Response &res);
+    static void HandleReqTree(const httplib::Request &req, httplib::Response &res);
 
     void StartHealthCheckThread();
     void HealthCheckLoop();

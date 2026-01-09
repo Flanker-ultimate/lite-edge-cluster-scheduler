@@ -154,6 +154,11 @@ class MetricsSampler:
         self._lock = threading.Lock()
         self._last_sample = {}
         self._last_net = psutil.net_io_counters()
+        try:
+            self._last_sample = self._sample()
+        except Exception as exc:
+            print(f"[metrics] initial sample failed: {exc}")
+            self._last_sample = {}
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
@@ -199,7 +204,12 @@ class MetricsSampler:
     def _loop(self):
         psutil.cpu_percent(interval=None)
         while True:
-            sample = self._sample()
+            try:
+                sample = self._sample()
+            except Exception as exc:
+                print(f"[metrics] sample failed: {exc}")
+                time.sleep(self.interval_sec)
+                continue
             with self._lock:
                 self._last_sample = sample
             time.sleep(self.interval_sec)
@@ -398,11 +408,15 @@ class StrictIPSender:
             self.metrics_sampler = MetricsSampler(self.gateway_host, self.gateway_port, sample_interval_sec)
             self.csv_writer = SubReqCsvWriter(csv_path)
             self._start_collect_writer(sample_interval_sec)
+            self._done_tasks = set()
+            self._done_lock = threading.Lock()
         else:
             self.task_map = None
             self.sub_req_tracker = None
             self.metrics_sampler = None
             self.csv_writer = None
+            self._done_tasks = set()
+            self._done_lock = threading.Lock()
 
         # 兼容旧模式：未配置服务目录时，仍按 input_dir 扫描 <ip>/...
         if not self.service_dirs:
@@ -472,6 +486,25 @@ class StrictIPSender:
             except Exception:
                 pass
 
+    def notify_gateway_task_result_ready(self, task_id: str) -> bool:
+        """Notify gateway that the result is ready to send."""
+        try:
+            conn = http.client.HTTPConnection(self.gateway_host, self.gateway_port, timeout=5)
+            payload = json.dumps({"task_id": task_id}).encode("utf-8")
+            headers = {"Content-Type": "application/json", "Content-Length": str(len(payload))}
+            conn.request("POST", "/task_result_ready", body=payload, headers=headers)
+            resp = conn.getresponse()
+            _ = resp.read()
+            return resp.status == 200
+        except Exception as e:
+            print(f"gateway result-ready notify error: {e}")
+            return False
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
     def _on_task_completed(self, task_id: str):
         if not self.enable_csv:
             return
@@ -499,6 +532,16 @@ class StrictIPSender:
         except Exception:
             pass
         self.csv_writer.write_row(meta, end_metrics, "yolo_end")
+
+    def _mark_task_done_once(self, task_id: str) -> bool:
+        if not self.enable_csv:
+            return False
+        with self._done_lock:
+            if task_id in self._done_tasks:
+                return False
+            self._done_tasks.add(task_id)
+        self._on_task_completed(task_id)
+        return True
 
     def _start_collect_writer(self, interval_sec: int):
         def loop():
@@ -591,12 +634,13 @@ class StrictIPSender:
         # 批量发送
         success_count = 0
         for filename, file_path in files_to_send:
+            self._mark_task_done_once(filename)
+            self.notify_gateway_task_result_ready(task_id=filename)
             if self._send_single_file(file_path, ip, service):
                 notified = self.notify_gateway_task_completed(task_id=filename, client_ip=ip, service=service, status="success")
                 if not notified:
                     print(f"gateway notify failed, keep file for retry: {filename}")
                     continue
-                self._on_task_completed(filename)
                 success_count += 1
                 try:
                     os.remove(file_path)

@@ -34,6 +34,8 @@ bool HttpServer::Start() {
     svr.Post(SCHEDULE_ROUTE, this->HandleSchedule);
     svr.Post(DISCONNECT_NODE_ROUTE, this->HandleDisconnect);
     svr.Post(TASK_COMPLETED_ROUTE, this->HandleTaskCompleted);
+    svr.Post(TASK_RESULT_READY_ROUTE, this->HandleTaskResultReady);
+    svr.Get(REQ_TREE_ROUTE, this->HandleReqTree);
 
     spdlog::info("HttpServer started success，ip:{} port:{}",this->ip, this->port);
     StartHealthCheckThread();
@@ -285,6 +287,7 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
             std::chrono::system_clock::now().time_since_epoch()).count();
         client_req.tasks = std::move(tasks);
 
+        Docker_scheduler::GetRequestTracker().OnClientRequest(client_req);
         Docker_scheduler::SubmitClientRequest(client_req);
 
         spdlog::info("client_req {} enqueued: {} tasks, strategy={}", req_id, total_num,
@@ -347,6 +350,8 @@ void HttpServer::HandleTaskCompleted(const httplib::Request &req, httplib::Respo
         std::string client_ip = jsonData["client_ip"];
         std::string status = jsonData["status"];
 
+        Docker_scheduler::GetRequestTracker().OnTaskSent(task_id);
+
         // 如果状态是成功，则从运行中的任务列表中移除
         if (status == "success") {
             auto completed_task = Docker_scheduler::GetTaskQueueManager().CompleteTaskAndGet(task_id);
@@ -397,6 +402,35 @@ void HttpServer::HandleTaskCompleted(const httplib::Request &req, httplib::Respo
         res.status = 400;
         res.set_content("{\"status\":\"error\",\"msg\":\"invalid json\"}", "application/json");
     }
+}
+
+void HttpServer::HandleTaskResultReady(const httplib::Request &req, httplib::Response &res) {
+    try {
+        auto jsonData = json::parse(req.body);
+        if (!jsonData.contains("task_id")) {
+            res.status = 400;
+            res.set_content("{\"status\":\"error\",\"msg\":\"missing required field: task_id\"}", "application/json");
+            return;
+        }
+        std::string task_id = jsonData["task_id"];
+        Docker_scheduler::GetRequestTracker().OnTaskResultReady(task_id);
+        res.status = 200;
+        res.set_content("{\"status\":\"ok\",\"msg\":\"task marked result_ready\"}", "application/json");
+    } catch (const std::exception &e) {
+        spdlog::error("HandleTaskResultReady exception: {}", e.what());
+        res.status = 400;
+        res.set_content("{\"status\":\"error\",\"msg\":\"invalid json\"}", "application/json");
+    }
+}
+
+void HttpServer::HandleReqTree(const httplib::Request &req, httplib::Response &res) {
+    std::string client_ip;
+    if (req.has_param("client_ip")) {
+        client_ip = req.get_param_value("client_ip");
+    }
+    json payload = Docker_scheduler::GetRequestTracker().BuildSnapshot(client_ip);
+    res.status = 200;
+    res.set_content(payload.dump(), "application/json");
 }
 
 void HttpServer::StartHealthCheckThread() {

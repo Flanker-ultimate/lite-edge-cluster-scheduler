@@ -36,6 +36,13 @@ enum class ScheduleStrategy {
     ROUND_ROBIN
 };
 
+enum class TaskProgressStatus {
+    WAITING,
+    RUNNING,
+    RESULT_READY,
+    SENT
+};
+
 struct ImageTask {
     std::string task_id;   // unique identifier, prefer filename
     std::string file_path; // absolute path on master disk
@@ -71,6 +78,48 @@ struct SubRequest {
     DeviceID dst_device_id{};
     std::string dst_device_ip;
     std::vector<ImageTask> tasks;
+};
+
+struct TaskProgress {
+    std::string task_id;
+    std::string req_id;
+    std::string sub_req_id;
+    std::string device_id;
+    std::string device_ip;
+    TaskProgressStatus status{TaskProgressStatus::WAITING};
+};
+
+struct SubReqProgress {
+    std::string sub_req_id;
+    std::string req_id;
+    std::string client_ip;
+    std::string device_id;
+    std::string device_ip;
+    std::vector<std::string> task_ids;
+};
+
+struct ReqProgress {
+    std::string req_id;
+    std::string client_ip;
+    std::string tasktype;
+    int total{0};
+    std::vector<std::string> sub_req_ids;
+};
+
+class RequestTracker {
+public:
+    void OnClientRequest(const ClientRequest &req);
+    void OnSubRequestAllocated(const SubRequest &sub_req);
+    void OnTaskRunning(const std::string &task_id);
+    void OnTaskResultReady(const std::string &task_id);
+    void OnTaskSent(const std::string &task_id);
+    nlohmann::json BuildSnapshot(const std::string &client_ip) const;
+
+private:
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, ReqProgress> reqs_;
+    std::unordered_map<std::string, SubReqProgress> sub_reqs_;
+    std::unordered_map<std::string, TaskProgress> tasks_;
 };
 
 struct StaticInfoItem {
@@ -135,6 +184,7 @@ private:
     int scheduling_trget; // current scheduling_target
     static TaskQueueManager task_queue_manager_;
     static std::once_flag scheduler_loop_once_flag_;
+    static RequestTracker request_tracker_;
 
     static Device selectDeviceByLoad(const std::vector<DeviceID>& devIds);
 
@@ -179,6 +229,8 @@ public:
     static void loadStaticInfo(std::string filepath);
     // get static_info
     static std::map<TaskType, std::map<DeviceType, StaticInfoItem>> getStaticInfo() ;
+
+    static RequestTracker &GetRequestTracker();
 
     static ImageInfo getImage(TaskType taskType, DeviceType devType);
 
