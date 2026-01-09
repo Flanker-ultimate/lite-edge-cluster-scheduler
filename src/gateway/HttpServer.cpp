@@ -231,7 +231,7 @@ void HttpServer::HandleSchedule(const httplib::Request &req, httplib::Response &
         }
         if (filenames.empty()) {
             res.status = 400;
-            res.set_content(R"({"status":"error","msg":"missing filename(s)"})", "application/json");
+            res.set_content(R"json({"status":"error","msg":"missing filename(s)"})json", "application/json");
             return;
         }
         std::string req_id = body_json.value("req_id", "");
