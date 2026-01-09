@@ -29,7 +29,7 @@ find . -name "CTestTestfile.cmake" -type f -delete
 find . -name "*.cbp" -type f -delete
 
 # 3. 清理 Python 缓存
-# 根据 .gitignore 规则: src/modules/slave/yolov5-ascend/__pycache__/
+# 根据 .gitignore 规则: src/modules/slave/task_dealer/可执行程序/yolov5-ascend/__pycache__/
 echo "[3/4] 清理 Python 缓存 (__pycache__)..."
 find . -name "__pycache__" -type d -exec rm -rf {} +
 find . -name "*.pyc" -type f -delete
