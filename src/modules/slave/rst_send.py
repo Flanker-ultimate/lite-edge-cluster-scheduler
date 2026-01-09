@@ -56,6 +56,15 @@ DEFAULT_SLAVE_BACKEND_CONFIG = os.path.join(PROJECT_ROOT, "config_files", "slave
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(SUB_REQ_DIR, exist_ok=True)
 
+def read_load_sim_state(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 
 def _safe_name(raw: str) -> str:
     out = []
@@ -460,7 +469,7 @@ class StrictIPSender:
         return out
 
     def notify_gateway_task_completed(self, task_id: str, client_ip: str, service: str, status: str = "success") -> bool:
-        """通知gateway该任务已完成（或失败）。"""
+        """Notify gateway that a task finished (success or failure)."""
         try:
             conn = http.client.HTTPConnection(self.gateway_host, self.gateway_port, timeout=5)
             payload = json.dumps(
@@ -616,22 +625,20 @@ class StrictIPSender:
             return False
 
     def send_files_to_ip(self, service: str, ip: str, ip_path: str):
-        """批量发送目录下所有文件到对应IP"""
+        """Send all files under a single IP directory."""
         files_to_send = []
 
-        # 收集所有文件（不限制格式）
         for filename in os.listdir(ip_path):
             file_path = os.path.join(ip_path, filename)
             if os.path.isfile(file_path):
                 files_to_send.append((filename, file_path))
 
         if not files_to_send:
-            print(f"⚠️  {ip} 目录下没有文件")
+            print(f"[rst_send] no files under {ip}")
             return
 
-        print(f"📁 处理 {ip} 目录 (共 {len(files_to_send)} 个文件)")
+        print(f"[rst_send] processing {ip} ({len(files_to_send)} files)")
 
-        # 批量发送
         success_count = 0
         for filename, file_path in files_to_send:
             self._mark_task_done_once(filename)
@@ -639,16 +646,16 @@ class StrictIPSender:
             if self._send_single_file(file_path, ip, service):
                 notified = self.notify_gateway_task_completed(task_id=filename, client_ip=ip, service=service, status="success")
                 if not notified:
-                    print(f"gateway notify failed, keep file for retry: {filename}")
+                    print(f"[rst_send] gateway notify failed, keep file for retry: {filename}")
                     continue
                 success_count += 1
                 try:
                     os.remove(file_path)
-                    print(f"🗑️  已删除: {filename}")
+                    print(f"[rst_send] removed {filename}")
                 except Exception as e:
-                    print(f"❌ 删除失败 {filename}: {e}")
+                    print(f"[rst_send] remove failed {filename}: {e}")
 
-        print(f"✅ {ip} 处理完成: {success_count}/{len(files_to_send)} 成功")
+        print(f"[rst_send] done {ip}: {success_count}/{len(files_to_send)} ok")
 
     def _send_single_file(self, file_path: str, ip: str, service: str) -> bool:
         """发送单个文件到指定IP"""
@@ -694,7 +701,7 @@ class StrictIPSender:
             return False
 
     def process_next_ip(self):
-        """处理下一个最旧的IP目录（多服务模式会跨 service 选择最旧的目录）"""
+        """Process the oldest IP directory across services."""
         candidates: List[Tuple[float, str, str, str]] = []
 
         if self.service_dirs:
@@ -719,7 +726,7 @@ class StrictIPSender:
                 candidates.append((mtime, "default", ip, ip_path))
 
         if not candidates:
-            print(f"⏳ 未发现有效IP子目录，等待 {self.interval} 秒...")
+            print(f"[rst_send] no valid ip dir, wait {self.interval}s...")
             return False
 
         candidates.sort(key=lambda x: x[0])
@@ -728,8 +735,8 @@ class StrictIPSender:
         return True
 
     def run(self):
-        """启动严格监控模式"""
-        print("启动严格模式监控...")
+        """Start strict monitoring loop."""
+        print("[rst_send] strict monitor start...")
         print("=" * 50)
 
         try:
@@ -737,14 +744,13 @@ class StrictIPSender:
                 if not self.process_next_ip():
                     time.sleep(self.interval)
         except KeyboardInterrupt:
-            print("\n监控已停止")
+            print("[rst_send] stopped")
         except Exception as e:
-            print(f"监控出错: {e}")
-
+            print(f"[rst_send] error: {e}")
 
 def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description="IP子目录图片监控与发送程序")
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="rst_send monitor and sender")
     parser.add_argument(
         "--input-dir",
         "-i",
@@ -835,15 +841,8 @@ if __name__ == "__main__":
         )
         sender.run()
     except (FileNotFoundError, NotADirectoryError) as e:
-        print(f"❌ 初始化失败: {e}")
-        print("请确保：")
-        print(f"1. 目录 {args.input_dir} 存在")
-        print(f"2. 该路径是一个目录")
+        print(f"[rst_send] init failed: {e}")
+        print("Please ensure:")
+        print(f"1. input dir exists: {args.input_dir}")
+        print("2. path is a directory")
         exit(1)
-def read_load_sim_state(path: str) -> dict:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}

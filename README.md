@@ -152,6 +152,10 @@ agent 默认会在注册成功后启动并守护 `slave-recv_server` 与 `slave-
   - `--enable-csv/--disable-csv`: 开关 `sub_req_metrics.csv`
   - `--csv-path`: CSV 输出路径
   - `--sample-interval`: 采样间隔（秒）
+- 默认逻辑（rst_send）：
+  - 不加 `--csv-path` 时默认写到 `workspace/slave/log/sub_req_metrics.csv`
+  - 不加 `--sample-interval` 时默认 3 秒
+  - 未显式指定 `--disable-csv` 时默认启用 CSV
 - 常用参数参考（recv_server）：
   - `--config`: `slave_backend.json` 路径
   - `--agent-port`: agent 控制端口（默认 8000）

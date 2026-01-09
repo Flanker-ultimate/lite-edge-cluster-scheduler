@@ -1411,4 +1411,5 @@ bool Docker_scheduler::Disconnect_device(Device device) {
         spdlog::error("Disconnect_device exception: {}", e.what());
         return false;
     }
+    return false;
 }
