@@ -5,6 +5,7 @@
 #include <mutex>
 #include <string>
 #include <queue>
+#include <atomic>
 
 const static size_t kCpuUsageQueueSize = 5;
 const static double DISCONNECTTIME = 30.0;
@@ -20,11 +21,12 @@ class MachineInfoCollectorBase {
 public:
     MachineInfoCollectorBase(std::string gatewayIp, int gatewayPort)
             : gatewayIp(std::move(gatewayIp)), gatewayPort(gatewayPort) {
-        StartCollect();
         for (size_t i = 0; i < kCpuUsageQueueSize; i++) {
             cpuUsageQueue.push_back(0.0);
         }
+        StartCollect();
     }
+    virtual ~MachineInfoCollectorBase();
 
     double GetCpuUsage();
 
@@ -41,6 +43,7 @@ public:
 private:
     std::thread collectorThread;
     std::mutex collectorMutex;
+    std::atomic<bool> stop_{false};
 
     CpuUsageInfo prevCpuUsage{};
     CpuUsageInfo currCpuUsage{};
@@ -53,6 +56,7 @@ private:
 
 
     void StartCollect();
+    void StopCollect();
 
     void CollectThread();
 

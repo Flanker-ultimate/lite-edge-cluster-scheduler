@@ -114,6 +114,7 @@ public:
     void OnTaskResultReady(const std::string &task_id);
     void OnTaskSent(const std::string &task_id);
     nlohmann::json BuildSnapshot(const std::string &client_ip) const;
+    std::optional<nlohmann::json> BuildSubReqDetail(const std::string &sub_req_id) const;
 
 private:
     mutable std::mutex mutex_;

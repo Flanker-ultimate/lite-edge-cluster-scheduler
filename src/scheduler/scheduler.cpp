@@ -148,8 +148,7 @@ void RequestTracker::OnTaskSent(const std::string &task_id) {
 json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
     std::lock_guard<std::mutex> lock(mutex_);
     json out;
-    out["client_ip"] = client_ip;
-    json reqs = json::array();
+    std::map<std::string, json> grouped;
     for (const auto &pair : reqs_) {
         const ReqProgress &req = pair.second;
         if (!client_ip.empty() && req.client_ip != client_ip) {
@@ -175,7 +174,6 @@ json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
             int sub_running = 0;
             int sub_ready = 0;
             int sub_waiting = 0;
-            json task_arr = json::array();
             for (const auto &task_id : sub.task_ids) {
                 auto task_it = tasks_.find(task_id);
                 if (task_it == tasks_.end()) {
@@ -191,10 +189,6 @@ json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
                 } else {
                     sub_waiting++;
                 }
-                json task_json;
-                task_json["task_id"] = tp.task_id;
-                task_json["status"] = ProgressStatusToString(tp.status);
-                task_arr.push_back(task_json);
             }
             sent_count += sub_sent;
             running_count += sub_running;
@@ -212,13 +206,12 @@ json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
             sub_json["sub_req_id"] = sub.sub_req_id;
             sub_json["device_id"] = sub.device_id;
             sub_json["device_ip"] = sub.device_ip;
-            sub_json["total"] = static_cast<int>(sub.task_ids.size());
-            sub_json["waiting"] = sub_waiting;
-            sub_json["processing"] = sub_running;
-            sub_json["result_ready"] = sub_ready;
-            sub_json["sent"] = sub_sent;
+            sub_json["total_task_num"] = static_cast<int>(sub.task_ids.size());
+            sub_json["waiting_task_num"] = sub_waiting;
+            sub_json["processing_task_num"] = sub_running;
+            sub_json["result_ready_task_num"] = sub_ready;
+            sub_json["rst_send_task_num"] = sub_sent;
             sub_json["status"] = sub_status;
-            sub_json["tasks"] = task_arr;
             sub_arr.push_back(sub_json);
         }
         std::string req_status;
@@ -235,9 +228,48 @@ json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
         req_json["sent"] = sent_count;
         req_json["status"] = req_status;
         req_json["sub_reqs"] = sub_arr;
-        reqs.push_back(req_json);
+        auto &group = grouped[req.client_ip];
+        if (group.is_null()) {
+            group = json::object();
+            group["client_ip"] = req.client_ip;
+            group["reqs"] = json::array();
+        }
+        group["reqs"].push_back(req_json);
     }
-    out["reqs"] = reqs;
+    json clients = json::array();
+    for (auto &entry : grouped) {
+        clients.push_back(entry.second);
+    }
+    out["clients"] = clients;
+    return out;
+}
+
+std::optional<json> RequestTracker::BuildSubReqDetail(const std::string &sub_req_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto sub_it = sub_reqs_.find(sub_req_id);
+    if (sub_it == sub_reqs_.end()) {
+        return std::nullopt;
+    }
+    const SubReqProgress &sub = sub_it->second;
+    json out;
+    out["sub_req_id"] = sub.sub_req_id;
+    out["req_id"] = sub.req_id;
+    out["client_ip"] = sub.client_ip;
+    out["device_id"] = sub.device_id;
+    out["device_ip"] = sub.device_ip;
+    json task_arr = json::array();
+    for (const auto &task_id : sub.task_ids) {
+        auto task_it = tasks_.find(task_id);
+        if (task_it == tasks_.end()) {
+            continue;
+        }
+        const TaskProgress &tp = task_it->second;
+        json task_json;
+        task_json["task_id"] = tp.task_id;
+        task_json["status"] = ProgressStatusToString(tp.status);
+        task_arr.push_back(task_json);
+    }
+    out["tasks"] = task_arr;
     return out;
 }
 

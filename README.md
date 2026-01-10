@@ -140,27 +140,6 @@ agent 默认会在注册成功后启动并守护 `slave-recv_server` 与 `slave-
 - `--disconnect`: 断开重连间隔（秒）
 - `--reconnect`: 重试间隔（秒）
 
-**agent_services.json (自启动参数可配)**
-- `recv_server_cmd` / `rst_send_cmd` 就是 agent 实际执行的命令，可在此追加参数（如 CSV/采样控制）。
-- 示例：开启 CSV 并自定义采样间隔/输出路径
-```json
-{
-  "rst_send_cmd": "{PYTHON} src/modules/slave/rst_send.py --config config_files/slave_backend.json --input-dir workspace/slave/data --interval 5 --target-port 8888 --gateway-host {MASTER_IP} --gateway-port {MASTER_PORT} --device-id {DEVICE_ID} --enable-csv --csv-path workspace/slave/log/sub_req_metrics.csv --sample-interval 3"
-}
-```
-- 常用参数参考（rst_send）：
-  - `--enable-csv/--disable-csv`: 开关 `sub_req_metrics.csv`
-  - `--csv-path`: CSV 输出路径
-  - `--sample-interval`: 采样间隔（秒）
-- 默认逻辑（rst_send）：
-  - 不加 `--csv-path` 时默认写到 `workspace/slave/log/sub_req_metrics.csv`
-  - 不加 `--sample-interval` 时默认 3 秒
-  - 未显式指定 `--disable-csv` 时默认启用 CSV
-- 常用参数参考（recv_server）：
-  - `--config`: `slave_backend.json` 路径
-  - `--agent-port`: agent 控制端口（默认 8000）
-- 如果 CSV 指标全为 0，先看 `workspace/slave/log/rst_send.log` 里的 `[metrics]` 提示，并确认 `ascend-dmi` 可执行/权限正常。
-
 ### 4【可选】启动接收服务器（Receive Server）
 ```bash
 python3 src/modules/slave/recv_server.py --config config_files/slave_backend.json
@@ -240,7 +219,6 @@ python3 ./src/modules/client/req_send.py \
     --max=200 \
     --workers=8
 ```
-说明：不加 `--batch` 仍是逐张发送；加 `--batch` 会通过 gRPC 批量上传并一次性调度。
 说明：`--tasktype` 用于指定该任务希望由哪个服务（服务名=tasktype）处理；master 会携带该字段转发，scheduler 会按 tasktype 选择支持该服务的 slave。
 
 ## ⚙️ 调度策略配置
@@ -296,6 +274,12 @@ lite-edge-cluster-scheduler/
 
 [请在此处添加许可证信息]
 
+
+## Script 目录脚本
+
+- `script/clean_workspace.sh`：清空 client/slave/master 的 workspace 数据，选项：`--with-logs` 清空 `workspace/{slave,master}/log`，`--reset-agent-id` 删除 `.agent_config.json` 以重新生成设备 ID。
+- `script/run_load_sim.py`：随机 IO/NET/YOLO 负载模拟，写出 `workspace/slave/log/load_sim_state.json` 供 CSV 抽样使用，重要参数：`--enable-io`/`--enable-net`/`--enable-yolo`、`--net-bandwidth-mb`、`--min-duration`/`--max-duration`、`--min-idle`/`--max-idle`。
+- `script/simulate_yolo_requests.py`：通过 gRPC 向 task_manager 发送 YOLO 批量请求，支持 `--source-dir` 指定图像目录，未指定时会生成随机 JPEG bytes，可配 `--count`/`--tasktype`/`--min-size`/`--max-size`。
 
 ## Load Simulation & CSV
 
@@ -391,3 +375,152 @@ python script/simulate_yolo_requests.py \
 ```
 
 CSV example file: `example/sub_req_metrics_example.csv`.
+
+## Gateway API (master-gateway)
+
+**Base URL**：`http://127.0.0.1:6666`
+
+### 1) POST `/schedule?stargety=load|roundrobin`
+提交任务调度请求，gateway 会根据 `--task` 目录下 `/<client_ip>/<filename>` 定位已上传文件。
+
+**Request JSON**
+```json
+{
+  "ip": "192.168.1.12",
+  "tasktype": "YoloV5",
+  "filenames": ["a.jpg", "b.jpg"],
+  "req_id": "req_0001",
+  "total_num": 2
+}
+```
+
+**Notes**
+- `filenames` 为数组；单文件可使用 `filename` 字符串字段。
+- `total_num` 如传入，必须与 `filenames` 数量一致。
+- `stargety` 故意拼写保持与代码一致，不传时默认 load。
+
+**Response**
+```json
+{"status":"queued","msg":"task enqueued"}
+```
+
+### 2) POST `/register_node`
+注册 agent 节点。
+
+**Request JSON**
+```json
+{
+  "type": "RK3588",
+  "global_id": "uuid-string",
+  "ip_address": "192.168.1.101",
+  "agent_port": 8000,
+  "services": ["YoloV5", "ResNet50"]
+}
+```
+
+**Response**：`200` + `Node registered successfully`
+
+### 3) POST `/unregister_node`
+节点退出 (断开连接/下线)。
+
+**Request JSON**
+```json
+{
+  "type": "RK3588",
+  "global_id": "uuid-string",
+  "ip_address": "192.168.1.101",
+  "agent_port": 8000
+}
+```
+
+**Response**
+```json
+{"status":"ok","msg":"device removed success"}
+```
+
+### 4) POST `/hot_start?taskid=<TaskType>`
+按 task type 对所有节点执行热启动。
+
+**Example**
+```bash
+curl -X POST "http://127.0.0.1:6666/hot_start?taskid=YoloV5"
+```
+
+### 5) POST `/task_completed`
+slave 任务完成后上报，`status=success` 时 gateway 会尝试清理上传文件（可用 `--keep-upload` 关闭）。
+
+**Request JSON**
+```json
+{
+  "task_id": "a.jpg",
+  "device_id": "uuid-string",
+  "client_ip": "192.168.1.12",
+  "status": "success"
+}
+```
+
+### 6) POST `/task_result_ready`
+标记 task 结果已准备。
+
+**Request JSON**
+```json
+{"task_id":"a.jpg"}
+```
+
+### 7) GET `/req_tree?client_ip=<ip>`
+返回请求树和进度，不传 `client_ip` 则返回全部 client。
+
+**Response Example**
+```json
+{
+  "clients": [
+    {
+      "client_ip": "192.168.1.12",
+      "reqs": [
+        {
+          "req_id": "req_0001",
+          "client_ip": "192.168.1.12",
+          "tasktype": "YoloV5",
+          "total": 2,
+          "waiting": 0,
+          "processing": 1,
+          "result_ready": 0,
+          "sent": 1,
+          "status": "processing",
+          "sub_reqs": [
+            {
+              "sub_req_id": "req_0001_0",
+              "device_id": "uuid...",
+              "device_ip": "192.168.1.101",
+              "total_task_num": 2,
+              "waiting_task_num": 0,
+              "processing_task_num": 1,
+              "result_ready_task_num": 0,
+              "rst_send_task_num": 1,
+              "status": "processing"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 8) GET `/sub_req_detail?sub_req_id=<id>`
+返回子请求内容。
+
+**Response Example**
+```json
+{
+  "sub_req_id": "req_0001_0",
+  "req_id": "req_0001",
+  "client_ip": "192.168.1.12",
+  "device_id": "uuid...",
+  "device_ip": "192.168.1.101",
+  "tasks": [
+    {"task_id": "a.jpg", "status": "processing"},
+    {"task_id": "b.jpg", "status": "sent"}
+  ]
+}
+```

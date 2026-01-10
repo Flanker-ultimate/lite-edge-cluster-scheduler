@@ -36,6 +36,7 @@ bool HttpServer::Start() {
     svr.Post(TASK_COMPLETED_ROUTE, this->HandleTaskCompleted);
     svr.Post(TASK_RESULT_READY_ROUTE, this->HandleTaskResultReady);
     svr.Get(REQ_TREE_ROUTE, this->HandleReqTree);
+    svr.Get(SUB_REQ_DETAIL_ROUTE, this->HandleSubReqDetail);
 
     spdlog::info("HttpServer started success，ip:{} port:{}",this->ip, this->port);
     StartHealthCheckThread();
@@ -431,6 +432,23 @@ void HttpServer::HandleReqTree(const httplib::Request &req, httplib::Response &r
     json payload = Docker_scheduler::GetRequestTracker().BuildSnapshot(client_ip);
     res.status = 200;
     res.set_content(payload.dump(), "application/json");
+}
+
+void HttpServer::HandleSubReqDetail(const httplib::Request &req, httplib::Response &res) {
+    if (!req.has_param("sub_req_id")) {
+        res.status = 400;
+        res.set_content("{\"status\":\"error\",\"msg\":\"missing sub_req_id\"}", "application/json");
+        return;
+    }
+    std::string sub_req_id = req.get_param_value("sub_req_id");
+    auto payload = Docker_scheduler::GetRequestTracker().BuildSubReqDetail(sub_req_id);
+    if (!payload.has_value()) {
+        res.status = 404;
+        res.set_content("{\"status\":\"error\",\"msg\":\"sub_req_id not found\"}", "application/json");
+        return;
+    }
+    res.status = 200;
+    res.set_content(payload->dump(), "application/json");
 }
 
 void HttpServer::StartHealthCheckThread() {

@@ -81,11 +81,21 @@ double MachineInfoCollectorBase::GetNetBandwidth() {
 
 void MachineInfoCollectorBase::StartCollect() {
     collectorThread = std::thread(&MachineInfoCollectorBase::CollectThread, this);
-    collectorThread.detach();
+}
+
+void MachineInfoCollectorBase::StopCollect() {
+    stop_.store(true);
+    if (collectorThread.joinable()) {
+        collectorThread.join();
+    }
+}
+
+MachineInfoCollectorBase::~MachineInfoCollectorBase() {
+    StopCollect();
 }
 
 void MachineInfoCollectorBase::CollectThread() {
-    while (true) {
+    while (!stop_.load()) {
         try {
             CollectCpuUsage();
         } catch (const std::exception &e) {
@@ -157,6 +167,9 @@ void MachineInfoCollectorBase::CollectCpuUsage() {
 void MachineInfoCollectorBase::CollectNetLatency() {
     // send Get request to gatewayIp
     httplib::Client client(gatewayIp, gatewayPort);
+    client.set_connection_timeout(0, 200000);
+    client.set_read_timeout(0, 200000);
+    client.set_write_timeout(0, 200000);
 
     auto start = std::chrono::high_resolution_clock::now();
     auto res = client.Get("/");

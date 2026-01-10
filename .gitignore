@@ -6,12 +6,5 @@ src/CMakeFiles
 *.tif
 *.png
 *.jpg
-<<<<<<< HEAD
-edge-cluster-scheduler/src/modules/master/files/pic/
-src/modules/slave/yolov5-ascend/__pycache__/
-example
-load_simulate
-=======
 **/__pycache__
 3rdparty/
->>>>>>> fefcf8f51dd736d3fca07b0fb83154dda035a18d

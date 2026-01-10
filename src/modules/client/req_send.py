@@ -48,7 +48,6 @@ def upload_one(stub: grpc.Channel, filename: str, tasktype: str = "YoloV5") -> T
 
 def upload_batch(stub: grpc.Channel, files: List[str], tasktype: str, req_id: str = "") -> Tuple[int, str]:
     total_num = len(files)
-
     def payload_iter():
         for idx, filename in enumerate(files):
             with open(filename, "rb") as f:
