@@ -47,7 +47,7 @@ const char *ProgressStatusToString(TaskProgressStatus status) {
         case TaskProgressStatus::RESULT_READY:
             return "result_ready";
         case TaskProgressStatus::SENT:
-            return "sent";
+            return "rst_sended";
         default:
             return "unknown";
     }
@@ -210,7 +210,7 @@ json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
             sub_json["waiting_task_num"] = sub_waiting;
             sub_json["processing_task_num"] = sub_running;
             sub_json["result_ready_task_num"] = sub_ready;
-            sub_json["rst_send_task_num"] = sub_sent;
+            sub_json["rst_sended_task_num"] = sub_sent;
             sub_json["status"] = sub_status;
             sub_arr.push_back(sub_json);
         }
@@ -225,7 +225,7 @@ json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
         req_json["waiting"] = waiting_count;
         req_json["processing"] = running_count;
         req_json["result_ready"] = ready_count;
-        req_json["sent"] = sent_count;
+        req_json["rst_sended"] = sent_count;
         req_json["status"] = req_status;
         req_json["sub_reqs"] = sub_arr;
         auto &group = grouped[req.client_ip];
@@ -242,6 +242,173 @@ json RequestTracker::BuildSnapshot(const std::string &client_ip) const {
     }
     out["clients"] = clients;
     return out;
+}
+
+json RequestTracker::BuildReqList(const std::string &client_ip) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    json out;
+    std::map<std::string, json> grouped;
+    for (const auto &pair : reqs_) {
+        const ReqProgress &req = pair.second;
+        if (!client_ip.empty() && req.client_ip != client_ip) {
+            continue;
+        }
+        json req_json;
+        req_json["req_id"] = req.req_id;
+        req_json["client_ip"] = req.client_ip;
+        req_json["tasktype"] = req.tasktype;
+        req_json["total"] = req.total;
+        int sent_count = 0;
+        int running_count = 0;
+        int ready_count = 0;
+        int waiting_count = 0;
+        json sub_id_arr = json::array();
+        for (const auto &sub_id : req.sub_req_ids) {
+            sub_id_arr.push_back(sub_id);
+            auto sub_it = sub_reqs_.find(sub_id);
+            if (sub_it == sub_reqs_.end()) {
+                continue;
+            }
+            const SubReqProgress &sub = sub_it->second;
+            for (const auto &task_id : sub.task_ids) {
+                auto task_it = tasks_.find(task_id);
+                if (task_it == tasks_.end()) {
+                    continue;
+                }
+                const TaskProgress &tp = task_it->second;
+                if (tp.status == TaskProgressStatus::SENT) {
+                    sent_count++;
+                } else if (tp.status == TaskProgressStatus::RESULT_READY) {
+                    ready_count++;
+                } else if (tp.status == TaskProgressStatus::RUNNING) {
+                    running_count++;
+                } else {
+                    waiting_count++;
+                }
+            }
+        }
+        std::string req_status;
+        if (req.total > 0 && sent_count == req.total) {
+            req_status = "completed";
+        } else if (running_count > 0 || ready_count > 0 || sent_count > 0) {
+            req_status = "processing";
+        } else {
+            req_status = "waiting";
+        }
+        req_json["waiting"] = waiting_count;
+        req_json["processing"] = running_count;
+        req_json["result_ready"] = ready_count;
+        req_json["rst_sended"] = sent_count;
+        req_json["status"] = req_status;
+        req_json["sub_req_ids"] = sub_id_arr;
+        auto &group = grouped[req.client_ip];
+        if (group.is_null()) {
+            group = json::object();
+            group["client_ip"] = req.client_ip;
+            group["reqs"] = json::array();
+        }
+        group["reqs"].push_back(req_json);
+    }
+    if (client_ip.empty()) {
+        json clients = json::array();
+        for (auto &entry : grouped) {
+            clients.push_back(entry.second);
+        }
+        out["clients"] = clients;
+    } else {
+        auto it = grouped.find(client_ip);
+        if (it != grouped.end()) {
+            out = it->second;
+        } else {
+            out["client_ip"] = client_ip;
+            out["reqs"] = json::array();
+        }
+    }
+    return out;
+}
+
+std::optional<json> RequestTracker::BuildReqDetail(const std::string &req_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto req_it = reqs_.find(req_id);
+    if (req_it == reqs_.end()) {
+        return std::nullopt;
+    }
+    const ReqProgress &req = req_it->second;
+    json req_json;
+    req_json["req_id"] = req.req_id;
+    req_json["client_ip"] = req.client_ip;
+    req_json["tasktype"] = req.tasktype;
+    req_json["total"] = req.total;
+    int sent_count = 0;
+    int running_count = 0;
+    int ready_count = 0;
+    int waiting_count = 0;
+    json sub_arr = json::array();
+    for (const auto &sub_id : req.sub_req_ids) {
+        auto sub_it = sub_reqs_.find(sub_id);
+        if (sub_it == sub_reqs_.end()) {
+            continue;
+        }
+        const SubReqProgress &sub = sub_it->second;
+        int sub_sent = 0;
+        int sub_running = 0;
+        int sub_ready = 0;
+        int sub_waiting = 0;
+        for (const auto &task_id : sub.task_ids) {
+            auto task_it = tasks_.find(task_id);
+            if (task_it == tasks_.end()) {
+                continue;
+            }
+            const TaskProgress &tp = task_it->second;
+            if (tp.status == TaskProgressStatus::SENT) {
+                sub_sent++;
+            } else if (tp.status == TaskProgressStatus::RESULT_READY) {
+                sub_ready++;
+            } else if (tp.status == TaskProgressStatus::RUNNING) {
+                sub_running++;
+            } else {
+                sub_waiting++;
+            }
+        }
+        sent_count += sub_sent;
+        running_count += sub_running;
+        ready_count += sub_ready;
+        waiting_count += sub_waiting;
+        std::string sub_status;
+        if (!sub.task_ids.empty() && sub_sent == static_cast<int>(sub.task_ids.size())) {
+            sub_status = "completed";
+        } else if (sub_running > 0 || sub_ready > 0 || sub_sent > 0) {
+            sub_status = "processing";
+        } else {
+            sub_status = "waiting";
+        }
+        json sub_json;
+        sub_json["sub_req_id"] = sub.sub_req_id;
+        sub_json["device_id"] = sub.device_id;
+        sub_json["device_ip"] = sub.device_ip;
+        sub_json["total_task_num"] = static_cast<int>(sub.task_ids.size());
+        sub_json["waiting_task_num"] = sub_waiting;
+        sub_json["processing_task_num"] = sub_running;
+        sub_json["result_ready_task_num"] = sub_ready;
+        sub_json["rst_sended_task_num"] = sub_sent;
+        sub_json["status"] = sub_status;
+        sub_arr.push_back(sub_json);
+    }
+    std::string req_status;
+    if (req.total > 0 && sent_count == req.total) {
+        req_status = "completed";
+    } else if (running_count > 0 || ready_count > 0 || sent_count > 0) {
+        req_status = "processing";
+    } else {
+        req_status = "waiting";
+    }
+    req_json["waiting"] = waiting_count;
+    req_json["processing"] = running_count;
+    req_json["result_ready"] = ready_count;
+    req_json["rst_sended"] = sent_count;
+    req_json["status"] = req_status;
+    req_json["sub_reqs"] = sub_arr;
+    return req_json;
 }
 
 std::optional<json> RequestTracker::BuildSubReqDetail(const std::string &sub_req_id) const {
@@ -270,6 +437,75 @@ std::optional<json> RequestTracker::BuildSubReqDetail(const std::string &sub_req
         task_arr.push_back(task_json);
     }
     out["tasks"] = task_arr;
+    return out;
+}
+
+std::unordered_map<std::string, json> RequestTracker::BuildDeviceSubReqs(
+    const std::unordered_set<std::string> &pending_ids) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::unordered_map<std::string, json> out;
+    for (const auto &pair : sub_reqs_) {
+        const SubReqProgress &sub = pair.second;
+        const bool pending_master = pending_ids.find(sub.sub_req_id) != pending_ids.end();
+        int sub_sent = 0;
+        int sub_running = 0;
+        int sub_ready = 0;
+        int sub_waiting = 0;
+        for (const auto &task_id : sub.task_ids) {
+            auto task_it = tasks_.find(task_id);
+            if (task_it == tasks_.end()) {
+                continue;
+            }
+            const TaskProgress &tp = task_it->second;
+            if (tp.status == TaskProgressStatus::SENT) {
+                sub_sent++;
+            } else if (tp.status == TaskProgressStatus::RESULT_READY) {
+                sub_ready++;
+            } else if (tp.status == TaskProgressStatus::RUNNING) {
+                sub_running++;
+            } else {
+                sub_waiting++;
+            }
+        }
+        std::string sub_status;
+        if (!sub.task_ids.empty() && sub_sent == static_cast<int>(sub.task_ids.size())) {
+            sub_status = "completed";
+        } else if (sub_running > 0 || sub_ready > 0 || sub_sent > 0) {
+            sub_status = "processing";
+        } else {
+            sub_status = "waiting";
+        }
+        std::string lifecycle_state;
+        if (pending_master) {
+            lifecycle_state = "pending_master";
+        } else if (!sub.task_ids.empty() && sub_sent == static_cast<int>(sub.task_ids.size())) {
+            lifecycle_state = "completed";
+        } else if (sub_running > 0) {
+            lifecycle_state = "running";
+        } else if (sub_ready > 0) {
+            lifecycle_state = "result_ready";
+        } else if (sub_sent > 0) {
+            lifecycle_state = "rst_sended";
+        } else {
+            lifecycle_state = "assigned";
+        }
+        json sub_json;
+        sub_json["sub_req_id"] = sub.sub_req_id;
+        sub_json["req_id"] = sub.req_id;
+        sub_json["client_ip"] = sub.client_ip;
+        sub_json["total_task_num"] = static_cast<int>(sub.task_ids.size());
+        sub_json["waiting_task_num"] = sub_waiting;
+        sub_json["processing_task_num"] = sub_running;
+        sub_json["result_ready_task_num"] = sub_ready;
+        sub_json["rst_sended_task_num"] = sub_sent;
+        sub_json["status"] = sub_status;
+        sub_json["lifecycle_state"] = lifecycle_state;
+        auto &arr = out[sub.device_id];
+        if (arr.is_null()) {
+            arr = json::array();
+        }
+        arr.push_back(sub_json);
+    }
     return out;
 }
 
@@ -330,6 +566,16 @@ bool TaskQueueManager::CompleteTask(const std::string &task_id) {
     return CompleteTaskAndGet(task_id).has_value();
 }
 
+std::vector<std::string> TaskQueueManager::GetPendingSubReqIds() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> out;
+    out.reserve(pending_queue_.size());
+    for (const auto &sub_req : pending_queue_) {
+        out.push_back(sub_req.sub_req_id);
+    }
+    return out;
+}
+
 void TaskQueueManager::RecoverTasks(const DeviceID &device_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = running_index_.find(device_id);
@@ -381,6 +627,68 @@ void Docker_scheduler::SubmitClientRequest(const ClientRequest &req) {
 
 bool Docker_scheduler::CompleteTask(const std::string &task_id) {
     return task_queue_manager_.CompleteTask(task_id);
+}
+
+json Docker_scheduler::BuildNodesSnapshot() {
+    json out;
+    json nodes = json::array();
+    std::unordered_set<std::string> pending_ids;
+    for (const auto &sub_req_id : task_queue_manager_.GetPendingSubReqIds()) {
+        pending_ids.insert(sub_req_id);
+    }
+    auto sub_reqs_by_device = request_tracker_.BuildDeviceSubReqs(pending_ids);
+
+    std::shared_lock<std::shared_mutex> lock(devs_mutex);
+    for (const auto &pair : device_static_info) {
+        const DeviceID &dev_id = pair.first;
+        const Device &dev = pair.second;
+        json node;
+        node["device_id"] = boost::uuids::to_string(dev_id);
+        node["device_ip"] = dev.ip_address;
+        node["device_type"] = to_string(nlohmann::json(dev.type));
+
+        json services = json::array();
+        auto svc_it = device_active_services.find(dev_id);
+        if (svc_it != device_active_services.end()) {
+            for (const auto &svc : svc_it->second) {
+                services.push_back(to_string(nlohmann::json(svc)));
+            }
+        }
+        node["services"] = services;
+
+        json metrics;
+        auto status_it = device_status.find(dev_id);
+        if (status_it != device_status.end()) {
+            const auto &status = status_it->second;
+            metrics["cpu_used"] = status.cpu_used;
+            metrics["mem_used"] = status.mem_used;
+            metrics["xpu_used"] = status.xpu_used;
+            metrics["net_latency_ms"] = status.net_latency;
+            metrics["net_bandwidth_mbps"] = status.net_bandwidth;
+            node["status"] = "online";
+        } else {
+            metrics["cpu_used"] = 0.0;
+            metrics["mem_used"] = 0.0;
+            metrics["xpu_used"] = 0.0;
+            metrics["net_latency_ms"] = 0.0;
+            metrics["net_bandwidth_mbps"] = 0.0;
+            node["status"] = "offline";
+        }
+        node["metrics"] = metrics;
+
+        const std::string dev_id_str = boost::uuids::to_string(dev_id);
+        auto sub_it = sub_reqs_by_device.find(dev_id_str);
+        if (sub_it != sub_reqs_by_device.end()) {
+            node["sub_reqs"] = sub_it->second;
+            node["sub_req_count"] = static_cast<int>(sub_it->second.size());
+        } else {
+            node["sub_reqs"] = json::array();
+            node["sub_req_count"] = 0;
+        }
+        nodes.push_back(node);
+    }
+    out["nodes"] = nodes;
+    return out;
 }
 
 std::vector<DeviceID> Docker_scheduler::GetCandidateDeviceIds(TaskType ttype) {

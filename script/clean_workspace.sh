@@ -43,6 +43,9 @@ rm -rf workspace/client/data/*/rst/* || true
 # slave: clear inputs/outputs and optionally logs
 rm -rf workspace/slave/data/*/input/* || true
 rm -rf workspace/slave/data/*/output/* || true
+# slave: clear sub-req tracking (kept under log dir)
+rm -rf workspace/slave/log/sub_reqs/* || true
+rm -f workspace/slave/log/sub_req_metrics.csv || true
 if [[ "$WITH_LOGS" -eq 1 ]]; then
   rm -rf workspace/slave/log/* || true
 fi

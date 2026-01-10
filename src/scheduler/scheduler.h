@@ -17,6 +17,7 @@
 #include <boost/uuid/uuid_hash.hpp>
 #include "device.h"
 #include <optional>
+#include <unordered_set>
 #include "spdlog/spdlog.h"
 #include "TimeRecorder.h"
 //#include <cpu_provider_factory.h>
@@ -114,7 +115,11 @@ public:
     void OnTaskResultReady(const std::string &task_id);
     void OnTaskSent(const std::string &task_id);
     nlohmann::json BuildSnapshot(const std::string &client_ip) const;
+    nlohmann::json BuildReqList(const std::string &client_ip) const;
+    std::optional<nlohmann::json> BuildReqDetail(const std::string &req_id) const;
     std::optional<nlohmann::json> BuildSubReqDetail(const std::string &sub_req_id) const;
+    std::unordered_map<std::string, nlohmann::json> BuildDeviceSubReqs(
+        const std::unordered_set<std::string> &pending_ids) const;
 
 private:
     mutable std::mutex mutex_;
@@ -158,6 +163,7 @@ public:
     std::optional<ImageTask> CompleteTaskAndGet(const std::string &reported_task_id);
     bool CompleteTask(const std::string &task_id);
     void MoveToFailed(const ImageTask &task);
+    std::vector<std::string> GetPendingSubReqIds();
 
 private:
     std::deque<SubRequest> pending_queue_;
@@ -285,6 +291,7 @@ public:
     static std::vector<SubRequest> AllocateSubRequests(const ClientRequest &req);
     static std::vector<DeviceID> GetCandidateDeviceIds(TaskType ttype);
     static bool CompleteTask(const std::string &task_id);
+    static nlohmann::json BuildNodesSnapshot();
     void display_devstatus(DeviceID dev_id){
         DeviceStatus status = device_status[dev_id];
         status.show();

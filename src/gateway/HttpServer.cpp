@@ -35,8 +35,10 @@ bool HttpServer::Start() {
     svr.Post(DISCONNECT_NODE_ROUTE, this->HandleDisconnect);
     svr.Post(TASK_COMPLETED_ROUTE, this->HandleTaskCompleted);
     svr.Post(TASK_RESULT_READY_ROUTE, this->HandleTaskResultReady);
-    svr.Get(REQ_TREE_ROUTE, this->HandleReqTree);
-    svr.Get(SUB_REQ_DETAIL_ROUTE, this->HandleSubReqDetail);
+    svr.Get(REQ_LIST_ROUTE, this->HandleReqList);
+    svr.Get(REQ_DETAIL_ROUTE, this->HandleReqDetail);
+    svr.Get(SUB_REQ_ROUTE, this->HandleSubReq);
+    svr.Get(NODES_ROUTE, this->HandleNodes);
 
     spdlog::info("HttpServer started success，ip:{} port:{}",this->ip, this->port);
     StartHealthCheckThread();
@@ -424,17 +426,34 @@ void HttpServer::HandleTaskResultReady(const httplib::Request &req, httplib::Res
     }
 }
 
-void HttpServer::HandleReqTree(const httplib::Request &req, httplib::Response &res) {
+void HttpServer::HandleReqList(const httplib::Request &req, httplib::Response &res) {
     std::string client_ip;
     if (req.has_param("client_ip")) {
         client_ip = req.get_param_value("client_ip");
     }
-    json payload = Docker_scheduler::GetRequestTracker().BuildSnapshot(client_ip);
+    json payload = Docker_scheduler::GetRequestTracker().BuildReqList(client_ip);
     res.status = 200;
     res.set_content(payload.dump(), "application/json");
 }
 
-void HttpServer::HandleSubReqDetail(const httplib::Request &req, httplib::Response &res) {
+void HttpServer::HandleReqDetail(const httplib::Request &req, httplib::Response &res) {
+    if (!req.has_param("req_id")) {
+        res.status = 400;
+        res.set_content("{\"status\":\"error\",\"msg\":\"missing req_id\"}", "application/json");
+        return;
+    }
+    std::string req_id = req.get_param_value("req_id");
+    auto payload = Docker_scheduler::GetRequestTracker().BuildReqDetail(req_id);
+    if (!payload.has_value()) {
+        res.status = 404;
+        res.set_content("{\"status\":\"error\",\"msg\":\"req_id not found\"}", "application/json");
+        return;
+    }
+    res.status = 200;
+    res.set_content(payload->dump(), "application/json");
+}
+
+void HttpServer::HandleSubReq(const httplib::Request &req, httplib::Response &res) {
     if (!req.has_param("sub_req_id")) {
         res.status = 400;
         res.set_content("{\"status\":\"error\",\"msg\":\"missing sub_req_id\"}", "application/json");
@@ -449,6 +468,12 @@ void HttpServer::HandleSubReqDetail(const httplib::Request &req, httplib::Respon
     }
     res.status = 200;
     res.set_content(payload->dump(), "application/json");
+}
+
+void HttpServer::HandleNodes(const httplib::Request &, httplib::Response &res) {
+    json payload = Docker_scheduler::BuildNodesSnapshot();
+    res.status = 200;
+    res.set_content(payload.dump(), "application/json");
 }
 
 void HttpServer::StartHealthCheckThread() {

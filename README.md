@@ -404,7 +404,127 @@ CSV example file: `example/sub_req_metrics_example.csv`.
 {"status":"queued","msg":"task enqueued"}
 ```
 
-### 2) POST `/register_node`
+### 2) GET `/reqs?client_ip=<ip>`
+查询 req 列表，不传则返回所有 client 的 req。
+
+**Response Example**
+```json
+{
+  "client_ip": "192.168.1.12",
+  "reqs": [
+    {
+      "req_id": "req_0001",
+      "tasktype": "YoloV5",
+      "total": 1200,
+      "waiting": 200,
+      "processing": 300,
+      "result_ready": 100,
+      "rst_sended": 600,
+      "status": "processing",
+      "sub_req_ids": ["req_0001_0", "req_0001_1"]
+    }
+  ]
+}
+```
+
+### 3) GET `/req?req_id=<req_id>`
+查询某个 req 的详细信息和 sub_req 列表。
+
+**Response Example**
+```json
+{
+  "req_id": "req_0001",
+  "client_ip": "192.168.1.12",
+  "tasktype": "YoloV5",
+  "total": 1200,
+  "waiting": 200,
+  "processing": 300,
+  "result_ready": 100,
+  "rst_sended": 600,
+  "status": "processing",
+  "sub_reqs": [
+    {
+      "sub_req_id": "req_0001_0",
+      "device_id": "uuid...",
+      "device_ip": "192.168.1.101",
+      "total_task_num": 400,
+      "waiting_task_num": 50,
+      "processing_task_num": 200,
+      "result_ready_task_num": 50,
+      "rst_sended_task_num": 100,
+      "status": "processing"
+    }
+  ]
+}
+```
+
+### 4) GET `/sub_req?sub_req_id=<sub_req_id>`
+查询某个 sub_req 的任务列表信息。
+
+**Response Example**
+```json
+{
+  "sub_req_id": "req_0001_0",
+  "req_id": "req_0001",
+  "client_ip": "192.168.1.12",
+  "device_id": "uuid...",
+  "device_ip": "192.168.1.101",
+  "tasks": [
+    {"task_id": "a.jpg", "status": "processing"},
+    {"task_id": "b.jpg", "status": "rst_sended"}
+  ]
+}
+```
+
+### 5) GET `/nodes`
+返回集群实时负载与节点承载的 sub_req 列表。
+
+**lifecycle_state 取值**
+- `pending_master`: sub_req 仍在 master pending 队列
+- `assigned`: 已分配到目标节点但尚未开始处理
+- `running`: 处理中（至少有 task 进入 processing）
+- `result_ready`: 结果已准备
+- `rst_sended`: 结果已发送
+- `completed`: 全部任务已完成且发送
+
+**Response Example**
+```json
+{
+  "nodes": [
+    {
+      "device_id": "uuid...",
+      "device_ip": "192.168.1.101",
+      "device_type": "RK3588",
+      "services": ["YoloV5"],
+      "status": "online",
+      "metrics": {
+        "cpu_used": 0.42,
+        "mem_used": 0.58,
+        "xpu_used": 0.21,
+        "net_latency_ms": 12.3,
+        "net_bandwidth_mbps": 180.5
+      },
+      "sub_req_count": 2,
+      "sub_reqs": [
+        {
+          "sub_req_id": "req_0001_0",
+          "req_id": "req_0001",
+          "client_ip": "192.168.1.12",
+          "total_task_num": 400,
+          "waiting_task_num": 400,
+          "processing_task_num": 0,
+          "result_ready_task_num": 0,
+          "rst_sended_task_num": 0,
+          "status": "waiting",
+          "lifecycle_state": "pending_master"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 6) POST `/register_node`
 注册 agent 节点。
 
 **Request JSON**
@@ -420,7 +540,7 @@ CSV example file: `example/sub_req_metrics_example.csv`.
 
 **Response**：`200` + `Node registered successfully`
 
-### 3) POST `/unregister_node`
+### 7) POST `/unregister_node`
 节点退出 (断开连接/下线)。
 
 **Request JSON**
@@ -438,7 +558,7 @@ CSV example file: `example/sub_req_metrics_example.csv`.
 {"status":"ok","msg":"device removed success"}
 ```
 
-### 4) POST `/hot_start?taskid=<TaskType>`
+### 8) POST `/hot_start?taskid=<TaskType>`
 按 task type 对所有节点执行热启动。
 
 **Example**
@@ -446,7 +566,7 @@ CSV example file: `example/sub_req_metrics_example.csv`.
 curl -X POST "http://127.0.0.1:6666/hot_start?taskid=YoloV5"
 ```
 
-### 5) POST `/task_completed`
+### 9) POST `/task_completed`
 slave 任务完成后上报，`status=success` 时 gateway 会尝试清理上传文件（可用 `--keep-upload` 关闭）。
 
 **Request JSON**
@@ -459,7 +579,7 @@ slave 任务完成后上报，`status=success` 时 gateway 会尝试清理上传
 }
 ```
 
-### 6) POST `/task_result_ready`
+### 10) POST `/task_result_ready`
 标记 task 结果已准备。
 
 **Request JSON**
@@ -467,60 +587,3 @@ slave 任务完成后上报，`status=success` 时 gateway 会尝试清理上传
 {"task_id":"a.jpg"}
 ```
 
-### 7) GET `/req_tree?client_ip=<ip>`
-返回请求树和进度，不传 `client_ip` 则返回全部 client。
-
-**Response Example**
-```json
-{
-  "clients": [
-    {
-      "client_ip": "192.168.1.12",
-      "reqs": [
-        {
-          "req_id": "req_0001",
-          "client_ip": "192.168.1.12",
-          "tasktype": "YoloV5",
-          "total": 2,
-          "waiting": 0,
-          "processing": 1,
-          "result_ready": 0,
-          "sent": 1,
-          "status": "processing",
-          "sub_reqs": [
-            {
-              "sub_req_id": "req_0001_0",
-              "device_id": "uuid...",
-              "device_ip": "192.168.1.101",
-              "total_task_num": 2,
-              "waiting_task_num": 0,
-              "processing_task_num": 1,
-              "result_ready_task_num": 0,
-              "rst_send_task_num": 1,
-              "status": "processing"
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
-### 8) GET `/sub_req_detail?sub_req_id=<id>`
-返回子请求内容。
-
-**Response Example**
-```json
-{
-  "sub_req_id": "req_0001_0",
-  "req_id": "req_0001",
-  "client_ip": "192.168.1.12",
-  "device_id": "uuid...",
-  "device_ip": "192.168.1.101",
-  "tasks": [
-    {"task_id": "a.jpg", "status": "processing"},
-    {"task_id": "b.jpg", "status": "sent"}
-  ]
-}
-```
